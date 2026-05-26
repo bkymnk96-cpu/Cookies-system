@@ -54,7 +54,6 @@ module.exports = {
       });
     }
 
-    // إعدادات افتراضية
     const settings = {
       title: "نظام التذاكر",
       description: "اضغط الزر أدناه لفتح تذكرة",
@@ -114,7 +113,6 @@ module.exports = {
       fetchReply: true,
     });
 
-    // حلقة التفاعل الرئيسية
     while (true) {
       try {
         const filter = (i) => i.user.id === interaction.user.id;
@@ -123,15 +121,89 @@ module.exports = {
           time: 300_000,
         });
 
+        // --- التعامل مع النوافذ المنبثقة (Modals) أولاً ---
+        if (i.type === 5) { // Modal Submit
+          const input = i.fields.getTextInputValue("input");
+          switch (i.customId) {
+            case "modal_buttonName":
+              settings.buttonName = input;
+              break;
+            case "modal_buttonEmoji":
+              settings.buttonEmoji = input;
+              break;
+            case "modal_title":
+              settings.title = input;
+              break;
+            case "modal_description":
+              settings.description = input;
+              break;
+            case "modal_embedImage":
+              settings.embedImage = input;
+              break;
+            case "modal_welcome":
+              settings.welcomeMessage = input;
+              break;
+          }
+          await i.deferUpdate(); // استهلاك التفاعل
+          await i.editReply({
+            embeds: [generatePreviewEmbed()],
+            components: [mainButtons()],
+          });
+          continue;
+        }
+
+        // --- باقي الأزرار والقوائم (Message Components) ---
+        // إذا كان الزر سيُظهر نافذة منبثقة، نعرضها فوراً دون deferUpdate
+        if (i.isStringSelectMenu()) {
+          const value = i.values[0];
+          if (
+            ["buttonName", "buttonEmoji", "title", "description", "embedImage", "welcomeMessage"].includes(value)
+          ) {
+            let modal;
+            if (value === "buttonName") {
+              modal = new ModalBuilder().setCustomId("modal_buttonName").setTitle("تغيير اسم الزر");
+              modal.addComponents(new ActionRowBuilder().addComponents(
+                new TextInputBuilder().setCustomId("input").setLabel("اسم الزر الجديد").setStyle(TextInputStyle.Short).setRequired(true)
+              ));
+            } else if (value === "buttonEmoji") {
+              modal = new ModalBuilder().setCustomId("modal_buttonEmoji").setTitle("إضافة إيموجي للزر");
+              modal.addComponents(new ActionRowBuilder().addComponents(
+                new TextInputBuilder().setCustomId("input").setLabel("أدخل الإيموجي (اختياري)").setStyle(TextInputStyle.Short).setRequired(false)
+              ));
+            } else if (value === "title") {
+              modal = new ModalBuilder().setCustomId("modal_title").setTitle("تغيير العنوان");
+              modal.addComponents(new ActionRowBuilder().addComponents(
+                new TextInputBuilder().setCustomId("input").setLabel("عنوان البانر الجديد").setStyle(TextInputStyle.Short).setRequired(true)
+              ));
+            } else if (value === "description") {
+              modal = new ModalBuilder().setCustomId("modal_description").setTitle("تغيير الوصف");
+              modal.addComponents(new ActionRowBuilder().addComponents(
+                new TextInputBuilder().setCustomId("input").setLabel("وصف البانر الجديد").setStyle(TextInputStyle.Paragraph).setRequired(true)
+              ));
+            } else if (value === "embedImage") {
+              modal = new ModalBuilder().setCustomId("modal_embedImage").setTitle("رابط صورة البانر");
+              modal.addComponents(new ActionRowBuilder().addComponents(
+                new TextInputBuilder().setCustomId("input").setLabel("أدخل رابط الصورة المباشر").setStyle(TextInputStyle.Short).setRequired(false)
+              ));
+            } else if (value === "welcomeMessage") {
+              modal = new ModalBuilder().setCustomId("modal_welcome").setTitle("رسالة الترحيب");
+              modal.addComponents(new ActionRowBuilder().addComponents(
+                new TextInputBuilder().setCustomId("input").setLabel("رسالة الترحيب داخل التذكرة").setStyle(TextInputStyle.Paragraph).setRequired(true)
+              ));
+            }
+            await i.showModal(modal);
+            continue;
+          }
+        }
+
+        // إذا وصلنا هنا، التفاعل لا يحتاج Modal، نستخدم deferUpdate
         await i.deferUpdate();
 
         if (i.customId === "cancel_setup") {
           return i.editReply({
             components: [],
             embeds: [
-              new EmbedBuilder()
-                .setColor("#FF0000")
-                .setDescription("❌ تم إلغاء عملية الإعداد."),
+              new EmbedBuilder().setColor("#FF0000").setDescription("❌ تم إلغاء عملية الإعداد."),
             ],
           });
         }
@@ -144,10 +216,9 @@ module.exports = {
             });
             continue;
           }
-          break; // الخروج من الحلقة للإرسال
+          break; // إرسال البانر
         }
 
-        // --- القوائم الرئيسية ---
         if (i.customId === "edit_basics") {
           const row = new ActionRowBuilder().addComponents(
             new StringSelectMenuBuilder()
@@ -185,143 +256,56 @@ module.exports = {
           continue;
         }
 
-        // --- معالجة Modal Submit ---
-        if (i.type === 5) { // Modal Submit
-          const customId = i.customId;
-          const input = i.fields.getTextInputValue("input");
-
-          switch (customId) {
-            case "modal_buttonName":
-              settings.buttonName = input;
-              break;
-            case "modal_buttonEmoji":
-              settings.buttonEmoji = input;
-              break;
-            case "modal_title":
-              settings.title = input;
-              break;
-            case "modal_description":
-              settings.description = input;
-              break;
-            case "modal_embedImage":
-              settings.embedImage = input;
-              break;
-            case "modal_welcome":
-              settings.welcomeMessage = input;
-              break;
-          }
-          await i.editReply({
-            embeds: [generatePreviewEmbed()],
-            components: [mainButtons()],
-          });
-          continue;
-        }
-
-        // --- معالجة القوائم المنسدلة ---
+        // --- معالجة القوائم المنسدلة (بعد deferUpdate) ---
         if (i.isStringSelectMenu()) {
           const value = i.values[0];
           const customId = i.customId;
 
-          // تحويل الخيارات التي تحتاج Modal
-          if (value === "buttonName") {
-            const modal = new ModalBuilder()
-              .setCustomId("modal_buttonName")
-              .setTitle("تغيير اسم الزر");
-            const input = new TextInputBuilder()
-              .setCustomId("input")
-              .setLabel("اسم الزر الجديد")
-              .setStyle(TextInputStyle.Short)
-              .setRequired(true);
-            modal.addComponents(new ActionRowBuilder().addComponents(input));
-            await i.showModal(modal);
+          if (value === "thumbnail") settings.thumbnail = !settings.thumbnail;
+          else if (value === "welcomeType") settings.welcomeType = settings.welcomeType === "embed" ? "message" : "embed";
+          else if (value === "askReason") settings.askReason = !settings.askReason;
+          else if (customId === "basic_select" && value === "buttonStyle") {
+            // عرض قائمة اختيار لون الزر
+            const row = new ActionRowBuilder().addComponents(
+              new StringSelectMenuBuilder()
+                .setCustomId("select_buttonStyle")
+                .setPlaceholder("اختر لون الزر")
+                .addOptions(buttonStyles.map(s => ({ label: s.name, value: s.value })))
+            );
+            await i.editReply({ components: [row, mainButtons()] });
             continue;
           }
-
-          if (value === "buttonEmoji") {
-            const modal = new ModalBuilder()
-              .setCustomId("modal_buttonEmoji")
-              .setTitle("إضافة إيموجي للزر");
-            const input = new TextInputBuilder()
-              .setCustomId("input")
-              .setLabel("أدخل الإيموجي (اختياري)")
-              .setStyle(TextInputStyle.Short)
-              .setRequired(false);
-            modal.addComponents(new ActionRowBuilder().addComponents(input));
-            await i.showModal(modal);
+          else if (customId === "basic_select" && value === "supportRole") {
+            const roles = interaction.guild.roles.cache.filter(r => !r.managed && r.name !== "@everyone").first(25);
+            const row = new ActionRowBuilder().addComponents(
+              new StringSelectMenuBuilder()
+                .setCustomId("select_supportRole")
+                .setPlaceholder("اختر رتبة الدعم")
+                .addOptions(roles.map(r => ({ label: r.name, value: r.id })))
+            );
+            await i.editReply({ components: [row, mainButtons()] });
             continue;
           }
-
-          if (value === "title") {
-            const modal = new ModalBuilder()
-              .setCustomId("modal_title")
-              .setTitle("تغيير العنوان");
-            const input = new TextInputBuilder()
-              .setCustomId("input")
-              .setLabel("عنوان البانر الجديد")
-              .setStyle(TextInputStyle.Short)
-              .setRequired(true);
-            modal.addComponents(new ActionRowBuilder().addComponents(input));
-            await i.showModal(modal);
+          else if (customId === "basic_select" && value === "category") {
+            const categories = interaction.guild.channels.cache.filter(c => c.type === ChannelType.GuildCategory).first(25);
+            const row = new ActionRowBuilder().addComponents(
+              new StringSelectMenuBuilder()
+                .setCustomId("select_category")
+                .setPlaceholder("اختر الفئة")
+                .addOptions(categories.map(c => ({ label: c.name, value: c.id })))
+            );
+            await i.editReply({ components: [row, mainButtons()] });
             continue;
           }
-
-          if (value === "description") {
-            const modal = new ModalBuilder()
-              .setCustomId("modal_description")
-              .setTitle("تغيير الوصف");
-            const input = new TextInputBuilder()
-              .setCustomId("input")
-              .setLabel("وصف البانر الجديد")
-              .setStyle(TextInputStyle.Paragraph)
-              .setRequired(true);
-            modal.addComponents(new ActionRowBuilder().addComponents(input));
-            await i.showModal(modal);
+          else if (customId === "advanced_select" && value === "color") {
+            const row = new ActionRowBuilder().addComponents(
+              new StringSelectMenuBuilder()
+                .setCustomId("select_color")
+                .setPlaceholder("اختر لون التضمين")
+                .addOptions(embedColors.map(c => ({ label: c.name, value: c.value })))
+            );
+            await i.editReply({ components: [row, mainButtons()] });
             continue;
-          }
-
-          if (value === "embedImage") {
-            const modal = new ModalBuilder()
-              .setCustomId("modal_embedImage")
-              .setTitle("رابط صورة البانر");
-            const input = new TextInputBuilder()
-              .setCustomId("input")
-              .setLabel("أدخل رابط الصورة المباشر")
-              .setStyle(TextInputStyle.Short)
-              .setRequired(false);
-            modal.addComponents(new ActionRowBuilder().addComponents(input));
-            await i.showModal(modal);
-            continue;
-          }
-
-          if (value === "welcomeMessage") {
-            const modal = new ModalBuilder()
-              .setCustomId("modal_welcome")
-              .setTitle("رسالة الترحيب");
-            const input = new TextInputBuilder()
-              .setCustomId("input")
-              .setLabel("رسالة الترحيب داخل التذكرة")
-              .setStyle(TextInputStyle.Paragraph)
-              .setRequired(true);
-            modal.addComponents(new ActionRowBuilder().addComponents(input));
-            await i.showModal(modal);
-            continue;
-          }
-
-          // خيارات مباشرة
-          if (value === "thumbnail") {
-            settings.thumbnail = !settings.thumbnail;
-          } else if (value === "welcomeType") {
-            settings.welcomeType = settings.welcomeType === "embed" ? "message" : "embed";
-          } else if (value === "askReason") {
-            settings.askReason = !settings.askReason;
-          } else if (customId === "select_buttonStyle") {
-            settings.buttonStyle = value;
-          } else if (customId === "select_supportRole") {
-            settings.supportRoleId = value;
-          } else if (customId === "select_category") {
-            settings.categoryId = value;
-          } else if (customId === "select_color") {
-            settings.color = value;
           }
 
           await i.editReply({
@@ -331,32 +315,28 @@ module.exports = {
           continue;
         }
 
-        // --- معالجة اختيارات القوائم الثانوية (buttonStyle, supportRole, category, color) ---
+        // --- معالجة اختيارات القوائم الثانوية ---
         if (i.customId === "select_buttonStyle") {
           settings.buttonStyle = i.values[0];
-          await i.editReply({ components: [mainButtons()] });
         } else if (i.customId === "select_supportRole") {
           settings.supportRoleId = i.values[0];
-          await i.editReply({ components: [mainButtons()] });
         } else if (i.customId === "select_category") {
           settings.categoryId = i.values[0];
-          await i.editReply({ components: [mainButtons()] });
         } else if (i.customId === "select_color") {
           settings.color = i.values[0];
-          await i.editReply({
-            embeds: [generatePreviewEmbed()],
-            components: [mainButtons()],
-          });
         }
+
+        await i.editReply({
+          embeds: [generatePreviewEmbed()],
+          components: [mainButtons()],
+        });
 
       } catch (error) {
         console.error(error);
         return interaction.editReply({
           components: [],
           embeds: [
-            new EmbedBuilder()
-              .setColor("#FF0000")
-              .setDescription("⏰ انتهت مهلة الإعداد أو حدث خطأ."),
+            new EmbedBuilder().setColor("#FF0000").setDescription("⏰ انتهت مهلة الإعداد أو حدث خطأ."),
           ],
         });
       }
@@ -391,9 +371,7 @@ module.exports = {
     await interaction.editReply({
       components: [],
       embeds: [
-        new EmbedBuilder()
-          .setColor("#00FF00")
-          .setDescription("✅ تم إنشاء نظام التذاكر بنجاح!"),
+        new EmbedBuilder().setColor("#00FF00").setDescription("✅ تم إنشاء نظام التذاكر بنجاح!"),
       ],
     });
   },
