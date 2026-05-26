@@ -81,6 +81,9 @@ module.exports = {
       });
     }
 
+    // جلب قوالب الترحيب المخزنة (من أمر welcome-setup)
+    const welcomeTemplates = (await keyValueService.get("welcomeTemplates", interaction.guild.id)) || {};
+
     const settings = {
       title: "نظام التذاكر",
       description: "اضغط الزر أدناه لفتح تذكرة",
@@ -100,8 +103,8 @@ module.exports = {
     const generatePreviewEmbed = () =>
       new EmbedBuilder()
         .setColor(settings.color)
-        .setTitle(settings.title || null) // يسمح بحذف العنوان
-        .setDescription(settings.description || null) // يسمح بحذف الوصف
+        .setTitle(settings.title || null)
+        .setDescription(settings.description || null)
         .setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() })
         .setTimestamp()
         .setThumbnail(settings.thumbnail ? interaction.guild.iconURL() : null)
@@ -142,7 +145,7 @@ module.exports = {
         const filter = (i) => i.user.id === interaction.user.id;
         const componentInteraction = await interaction.channel.awaitMessageComponent({
           filter,
-          time: 900_000, // 15 دقيقة
+          time: 900_000,
         });
 
         // --- الأزرار العامة ---
@@ -198,7 +201,6 @@ module.exports = {
 
             case "edit_advanced": {
               await componentInteraction.deferUpdate();
-              // --- بناء خيارات متقدمة مع الحالة الحالية ---
               const advOptions = [
                 { label: "عنوان البانر", value: "title", emoji: "🏷️" },
                 { label: "وصف البانر", value: "description", emoji: "📝" },
@@ -286,8 +288,41 @@ module.exports = {
           const value = componentInteraction.values[0];
           const customId = componentInteraction.customId;
 
+          // ---- قسم جديد: قائمة اختيار قالب الترحيب أو تخصيص يدوي ----
+          if (customId === "select_welcome") {
+            if (value === "__custom__") {
+              // فتح modal للكتابة اليدوية
+              const modal = new ModalBuilder()
+                .setCustomId("modal_welcome")
+                .setTitle("رسالة ترحيب مخصصة");
+              modal.addComponents(
+                new ActionRowBuilder().addComponents(
+                  new TextInputBuilder()
+                    .setCustomId("input")
+                    .setLabel("رسالة الترحيب (اتركها فارغة لعدم وجود رسالة)")
+                    .setStyle(TextInputStyle.Paragraph)
+                    .setRequired(false)
+                    .setValue(
+                      settings.welcomeMessage.startsWith("[template:") ? "" : settings.welcomeMessage
+                    )
+                )
+              );
+              await componentInteraction.showModal(modal);
+              continue;
+            } else {
+              // تم اختيار قالب محفوظ
+              settings.welcomeMessage = `[template:${value}]`;
+              await componentInteraction.deferUpdate();
+              await componentInteraction.editReply({
+                embeds: [generatePreviewEmbed()],
+                components: [mainButtons()],
+              });
+              continue;
+            }
+          }
+
           // خيارات تحتاج Modal (جميعها أصبحت غير إلزامية وتظهر النص الحالي)
-          const needsModal = ["buttonName", "buttonEmoji", "title", "description", "embedImage", "welcomeMessage"];
+          const needsModal = ["buttonName", "buttonEmoji", "title", "description", "embedImage"];
           if (needsModal.includes(value)) {
             let modal;
             const currentValue = {
@@ -296,7 +331,6 @@ module.exports = {
               title: settings.title,
               description: settings.description,
               embedImage: settings.embedImage,
-              welcomeMessage: settings.welcomeMessage,
             }[value];
 
             switch (value) {
@@ -355,17 +389,6 @@ module.exports = {
                     .setValue(currentValue)
                 ));
                 break;
-              case "welcomeMessage":
-                modal = new ModalBuilder().setCustomId("modal_welcome").setTitle("رسالة الترحيب");
-                modal.addComponents(new ActionRowBuilder().addComponents(
-                  new TextInputBuilder()
-                    .setCustomId("input")
-                    .setLabel("رسالة الترحيب (اتركها فارغة لعدم وجود رسالة)")
-                    .setStyle(TextInputStyle.Paragraph)
-                    .setRequired(false)
-                    .setValue(currentValue)
-                ));
-                break;
             }
             await componentInteraction.showModal(modal);
             const modalSubmit = await componentInteraction.awaitModalSubmit({ time: 120_000 });
@@ -376,10 +399,40 @@ module.exports = {
               case "modal_title": settings.title = input; break;
               case "modal_description": settings.description = input; break;
               case "modal_embedImage": settings.embedImage = input; break;
-              case "modal_welcome": settings.welcomeMessage = input; break;
             }
             await modalSubmit.deferUpdate();
             await modalSubmit.editReply({ embeds: [generatePreviewEmbed()], components: [mainButtons()] });
+            continue;
+          }
+
+          // معالجة اختيار welcomeMessage من القائمة الأساسية (تم نقله لـ select_welcome)
+          if (value === "welcomeMessage") {
+            const templateNames = Object.keys(welcomeTemplates);
+            const options = [];
+            if (templateNames.length > 0) {
+              templateNames.forEach(name => {
+                options.push({
+                  label: name,
+                  value: name,
+                  emoji: "📄",
+                });
+              });
+            }
+            // إضافة خيار التخصيص اليدوي
+            options.push({
+              label: "✍️ تخصيص يدوي (كتابة نص)",
+              value: "__custom__",
+              emoji: "✏️",
+            });
+
+            const welcomeRow = new ActionRowBuilder().addComponents(
+              new StringSelectMenuBuilder()
+                .setCustomId("select_welcome")
+                .setPlaceholder("اختر قالب ترحيب أو اكتب يدوياً")
+                .addOptions(options)
+            );
+            await componentInteraction.deferUpdate();
+            await componentInteraction.editReply({ components: [welcomeRow, mainButtons()] });
             continue;
           }
 
@@ -480,6 +533,18 @@ module.exports = {
           continue;
         }
 
+        // --- Modal الخاص بكتابة رسالة الترحيب اليدوية (القديم) ---
+        if (componentInteraction.type === 5 && componentInteraction.customId === "modal_welcome") {
+          const input = componentInteraction.fields.getTextInputValue("input");
+          settings.welcomeMessage = input;
+          await componentInteraction.deferUpdate();
+          await componentInteraction.editReply({
+            embeds: [generatePreviewEmbed()],
+            components: [mainButtons()],
+          });
+          continue;
+        }
+
         // --- Modal البحث ---
         if (componentInteraction.type === 5 && componentInteraction.customId.startsWith("modal_search_")) {
           const type = componentInteraction.customId.replace("modal_search_", "");
@@ -527,7 +592,7 @@ module.exports = {
     const randomId = `ticket_${Math.random().toString(36).substr(2, 9)}`;
     const btn = new ButtonBuilder()
       .setCustomId(randomId)
-      .setLabel(settings.buttonName || "فتح تذكرة") // تجنب زر فارغ
+      .setLabel(settings.buttonName || "فتح تذكرة")
       .setStyle(ButtonStyle[settings.buttonStyle]);
     if (settings.buttonEmoji) btn.setEmoji(settings.buttonEmoji);
 
@@ -542,7 +607,7 @@ module.exports = {
       Ask: settings.askReason,
     });
 
-    // ---- بداية الجزء المضاف (زر الحفظ والإنهاء) ----
+    // ---- زر الحفظ والإنهاء (بدون تغيير) ----
     const saveRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId("save_preset")
@@ -627,6 +692,5 @@ module.exports = {
         embeds: [new EmbedBuilder().setColor("#00FF00").setDescription("✅ تم إنشاء نظام التذاكر.")],
       });
     }
-    // ---- نهاية الجزء المضاف ----
   },
 };
