@@ -977,7 +977,7 @@ client27.on("ready", async () => {
   if (!status || status == "off") return;
   setInterval(() => {
     const users = protectDB.get(`roomsdelete_users_${guildid}`);
-    if (!users || users.length <= 0) return;
+    if (!Array.isArray(users) || users.length === 0) return;
     users.forEach(async (user) => {
       const { userid, limit, newReset } = user;
       const currentTime = moment().format("YYYY-MM-DD");
@@ -1061,7 +1061,7 @@ client27.on("ready", async () => {
   if (!status || status == "off") return;
   setInterval(() => {
     const users = protectDB.get(`rolesdelete_users_${guildid}`);
-    if (!users || users.length <= 0) return;
+    if (!Array.isArray(users) || users.length === 0) return;
     users.forEach(async (user) => {
       const { userid, limit, newReset } = user;
       const currentTime = moment().format("YYYY-MM-DD");
@@ -1145,7 +1145,7 @@ client27.on("ready", async () => {
   if (!status || status == "off") return;
   setInterval(() => {
     const users = protectDB.get(`ban_users_${guildid}`);
-    if (!users || users.length <= 0) return;
+    if (!Array.isArray(users) || users.length === 0) return;
     users.forEach(async (user) => {
       const { userid, limit, newReset } = user;
       const currentTime = moment().format("YYYY-MM-DD");
