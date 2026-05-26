@@ -35,6 +35,8 @@ const path = require("path");
 const { readdirSync } = require("fs");
 const { REST } = require("@discordjs/rest");
 const { Routes } = require("discord-api-types/v10");
+
+const rest = new REST({ version: "10" }).setToken(token);
 const { token, clientId, owner, prefix } = require("./config.js");
 const { connectDatabase } = require("./handlers/database");
 const theowner = owner;
