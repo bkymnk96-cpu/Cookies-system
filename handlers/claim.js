@@ -28,9 +28,9 @@ module.exports = (client7) => {
 
                 const Row = new ActionRowBuilder()
                     .addComponents(
-                        new ButtonBuilder().setStyle(ButtonStyle.Secondary).setLabel('Close').setCustomId(`close`),
-                        new ButtonBuilder().setCustomId('55555555555').setStyle(ButtonStyle.Success).setDisabled().setEmoji('✅').setLabel(`by ${interaction.user.username}`),
-                        new ButtonBuilder().setCustomId('unclaim').setStyle(ButtonStyle.Primary).setLabel('UnClaimed')
+                        new ButtonBuilder().setStyle(ButtonStyle.Danger).setLabel('إغلاق').setEmoji('🔒').setCustomId(`close`),
+                        new ButtonBuilder().setCustomId('55555555555').setStyle(ButtonStyle.Success).setDisabled().setEmoji('✅').setLabel(`بواسطة ${interaction.user.username}`),
+                        new ButtonBuilder().setCustomId('unclaim').setStyle(ButtonStyle.Secondary).setEmoji('❌').setLabel('إلغاء الاستلام')
                     )
                 let claimembed = new EmbedBuilder()
                     .setDescription(`**${interaction.user} قام بإستلام التذكره**`)
@@ -56,8 +56,8 @@ module.exports = (client7) => {
                         .setColor(`Blue`)
                     const Row = new ActionRowBuilder()
                         .addComponents(
-                            new ButtonBuilder().setStyle(ButtonStyle.Secondary).setLabel('Close').setCustomId(`close`),
-                            new ButtonBuilder().setStyle(ButtonStyle.Success).setLabel('Claim').setCustomId(`claim`)
+                            new ButtonBuilder().setStyle(ButtonStyle.Danger).setLabel('إغلاق').setEmoji('🔒').setCustomId(`close`),
+                            new ButtonBuilder().setStyle(ButtonStyle.Success).setEmoji('✅').setLabel('استلام').setCustomId(`claim`)
                         )
 
 
