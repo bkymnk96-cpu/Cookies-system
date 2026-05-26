@@ -39,15 +39,42 @@ const buttonStyles = [
   { name: "رمادي (ثانوي)", value: "Secondary" },
 ];
 
+function paginate(items, page = 0, perPage = 25) {
+  const totalPages = Math.ceil(items.length / perPage);
+  const sliced = items.slice(page * perPage, (page + 1) * perPage);
+  return { totalPages, page, items: sliced };
+}
+
+function createPaginationRow(currentPage, totalPages, type) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`page_prev_${type}`)
+      .setEmoji("◀️")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(currentPage <= 0),
+    new ButtonBuilder()
+      .setCustomId(`page_next_${type}`)
+      .setEmoji("▶️")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(currentPage >= totalPages - 1),
+    new ButtonBuilder()
+      .setCustomId(`search_${type}`)
+      .setLabel("🔍 بحث")
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId("back_to_main")
+      .setLabel("↩️ رجوع")
+      .setStyle(ButtonStyle.Danger)
+  );
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("setup-ticket")
     .setDescription("إنشاء نظام تذاكر احترافي بتجربة تفاعلية"),
 
   async execute(interaction) {
-    if (
-      !interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)
-    ) {
+    if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
       return interaction.reply({
         content: "❌ تحتاج إلى صلاحية `Administrator` لاستخدام هذا الأمر.",
         flags: MessageFlags.Ephemeral,
@@ -75,129 +102,179 @@ module.exports = {
         .setColor(settings.color)
         .setTitle(settings.title)
         .setDescription(settings.description)
-        .setFooter({
-          text: interaction.guild.name,
-          iconURL: interaction.guild.iconURL(),
-        })
+        .setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() })
         .setTimestamp()
         .setThumbnail(settings.thumbnail ? interaction.guild.iconURL() : null)
         .setImage(settings.embedImage || null);
 
     const mainButtons = () =>
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId("edit_basics")
-          .setLabel("⚙️ الإعدادات الأساسية")
-          .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
-          .setCustomId("edit_advanced")
-          .setLabel("✨ المظهر والرسالة")
-          .setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder()
-          .setCustomId("send_panel")
-          .setLabel("🚀 تأكيد وإرسال")
-          .setStyle(ButtonStyle.Success),
-        new ButtonBuilder()
-          .setCustomId("cancel_setup")
-          .setLabel("❌ إلغاء")
-          .setStyle(ButtonStyle.Danger)
+        new ButtonBuilder().setCustomId("edit_basics").setLabel("⚙️ الإعدادات الأساسية").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("edit_advanced").setLabel("✨ المظهر والرسالة").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("send_panel").setLabel("🚀 تأكيد وإرسال").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId("cancel_setup").setLabel("❌ إلغاء").setStyle(ButtonStyle.Danger)
       );
 
     await interaction.reply({
-      embeds: [
-        generatePreviewEmbed().setFooter({
-          text: "🛠️ معالج إعداد التذاكر | معاينة مباشرة",
-        }),
-      ],
+      embeds: [generatePreviewEmbed().setFooter({ text: "🛠️ معالج إعداد التذاكر | معاينة مباشرة" })],
       components: [mainButtons()],
       fetchReply: true,
     });
 
+    const paginationCache = {
+      roles: { items: [], page: 0, filtered: null },
+      categories: { items: [], page: 0, filtered: null },
+    };
+
+    function buildSelectMenu(items, customId, placeholder) {
+      const options = items.map((item) => ({
+        label: item.name.length > 100 ? item.name.substring(0, 97) + "..." : item.name,
+        value: item.id,
+      }));
+      return new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder().setCustomId(customId).setPlaceholder(placeholder).addOptions(options)
+      );
+    }
+
     // حلقة التفاعل الرئيسية
     while (true) {
       try {
-        // ننتظر أي تفاعل من المستخدم عبر الأزرار أو القوائم
         const filter = (i) => i.user.id === interaction.user.id;
         const componentInteraction = await interaction.channel.awaitMessageComponent({
           filter,
-          time: 300_000,
+          time: 900_000, // 15 دقيقة
         });
 
-        // التعامل مع الأزرار والقوائم
+        // --- الأزرار العامة ---
         if (componentInteraction.isButton()) {
-          if (componentInteraction.customId === "cancel_setup") {
-            await componentInteraction.deferUpdate();
-            return componentInteraction.editReply({
-              components: [],
-              embeds: [
-                new EmbedBuilder().setColor("#FF0000").setDescription("❌ تم إلغاء عملية الإعداد."),
-              ],
-            });
-          }
-
-          if (componentInteraction.customId === "send_panel") {
-            if (!settings.supportRoleId || !settings.categoryId) {
+          const btnId = componentInteraction.customId;
+          switch (btnId) {
+            case "cancel_setup":
               await componentInteraction.deferUpdate();
-              await componentInteraction.followUp({
-                content: "⚠️ يجب اختيار رتبة الدعم وفئة القنوات قبل الإرسال.",
-                flags: MessageFlags.Ephemeral,
+              return componentInteraction.editReply({
+                components: [],
+                embeds: [new EmbedBuilder().setColor("#FF0000").setDescription("❌ تم إلغاء عملية الإعداد.")],
               });
+
+            case "send_panel": {
+              // التحقق من المتطلبات بدقة
+              const missing = [];
+              if (!settings.supportRoleId) missing.push("رتبة الدعم");
+              if (!settings.categoryId) missing.push("فئة القنوات");
+
+              if (missing.length > 0) {
+                await componentInteraction.deferUpdate();
+                const msg =
+                  missing.length === 2
+                    ? `⚠️ يجب اختيار ${missing.join(" و ")} قبل الإرسال.`
+                    : `⚠️ يجب اختيار ${missing[0]} قبل الإرسال.`;
+                await componentInteraction.followUp({
+                  content: msg,
+                  flags: MessageFlags.Ephemeral,
+                });
+                continue;
+              }
+
+              await componentInteraction.deferUpdate();
+              break; // الخروج من while للإرسال
+            }
+
+            case "edit_basics": {
+              await componentInteraction.deferUpdate();
+              const row = new ActionRowBuilder().addComponents(
+                new StringSelectMenuBuilder()
+                  .setCustomId("basic_select")
+                  .setPlaceholder("اختر العنصر لتعديله")
+                  .addOptions([
+                    { label: "اسم الزر", value: "buttonName", emoji: "✏️" },
+                    { label: "لون الزر", value: "buttonStyle", emoji: "🎨" },
+                    { label: "إيموجي الزر", value: "buttonEmoji", emoji: "😀" },
+                    { label: "رتبة الدعم", value: "supportRole", emoji: "👥" },
+                    { label: "فئة القنوات", value: "category", emoji: "📁" },
+                  ])
+              );
+              await componentInteraction.editReply({ components: [row, mainButtons()] });
               continue;
             }
-            await componentInteraction.deferUpdate();
-            break; // إنهاء الحلقة والإرسال
-          }
 
-          if (componentInteraction.customId === "edit_basics") {
-            const row = new ActionRowBuilder().addComponents(
-              new StringSelectMenuBuilder()
-                .setCustomId("basic_select")
-                .setPlaceholder("اختر العنصر لتعديله")
-                .addOptions([
-                  { label: "اسم الزر", value: "buttonName", emoji: "✏️" },
-                  { label: "لون الزر", value: "buttonStyle", emoji: "🎨" },
-                  { label: "إيموجي الزر", value: "buttonEmoji", emoji: "😀" },
-                  { label: "رتبة الدعم", value: "supportRole", emoji: "👥" },
-                  { label: "فئة القنوات", value: "category", emoji: "📁" },
-                ])
-            );
-            await componentInteraction.deferUpdate();
-            await componentInteraction.editReply({
-              components: [row, mainButtons()],
-            });
-            continue;
-          }
+            case "edit_advanced": {
+              await componentInteraction.deferUpdate();
+              const row = new ActionRowBuilder().addComponents(
+                new StringSelectMenuBuilder()
+                  .setCustomId("advanced_select")
+                  .setPlaceholder("اختر العنصر لتعديله")
+                  .addOptions([
+                    { label: "عنوان البانر", value: "title", emoji: "🏷️" },
+                    { label: "وصف البانر", value: "description", emoji: "📝" },
+                    { label: "لون التضمين", value: "color", emoji: "🎨" },
+                    { label: "صورة البانر", value: "embedImage", emoji: "🖼️" },
+                    { label: "أيقونة السيرفر", value: "thumbnail", emoji: "🖼️" },
+                    { label: "نوع رسالة الترحيب", value: "welcomeType", emoji: "💬" },
+                    { label: "سؤال السبب", value: "askReason", emoji: "❓" },
+                    { label: "رسالة الترحيب", value: "welcomeMessage", emoji: "📩" },
+                  ])
+              );
+              await componentInteraction.editReply({ components: [row, mainButtons()] });
+              continue;
+            }
 
-          if (componentInteraction.customId === "edit_advanced") {
-            const row = new ActionRowBuilder().addComponents(
-              new StringSelectMenuBuilder()
-                .setCustomId("advanced_select")
-                .setPlaceholder("اختر العنصر لتعديله")
-                .addOptions([
-                  { label: "عنوان البانر", value: "title", emoji: "🏷️" },
-                  { label: "وصف البانر", value: "description", emoji: "📝" },
-                  { label: "لون التضمين", value: "color", emoji: "🎨" },
-                  { label: "صورة البانر", value: "embedImage", emoji: "🖼️" },
-                  { label: "أيقونة السيرفر", value: "thumbnail", emoji: "🖼️" },
-                  { label: "نوع رسالة الترحيب", value: "welcomeType", emoji: "💬" },
-                  { label: "سؤال السبب", value: "askReason", emoji: "❓" },
-                  { label: "رسالة الترحيب", value: "welcomeMessage", emoji: "📩" },
-                ])
-            );
-            await componentInteraction.deferUpdate();
-            await componentInteraction.editReply({
-              components: [row, mainButtons()],
-            });
-            continue;
+            default: {
+              // أزرار التصفح والبحث والرجوع
+              if (btnId.startsWith("page_prev_") || btnId.startsWith("page_next_") || btnId.startsWith("search_") || btnId === "back_to_main") {
+                await componentInteraction.deferUpdate();
+                if (btnId === "back_to_main") {
+                  paginationCache.roles.page = 0;
+                  paginationCache.roles.filtered = null;
+                  paginationCache.categories.page = 0;
+                  paginationCache.categories.filtered = null;
+                  await componentInteraction.editReply({ components: [mainButtons()] });
+                  continue;
+                }
+
+                const type = btnId.includes("roles") ? "roles" : "categories";
+                const cache = paginationCache[type];
+                let items = cache.filtered || cache.items;
+
+                if (btnId.startsWith("search_")) {
+                  const modal = new ModalBuilder()
+                    .setCustomId(`modal_search_${type}`)
+                    .setTitle(`بحث عن ${type === "roles" ? "رتبة" : "فئة"}`);
+                  const input = new TextInputBuilder()
+                    .setCustomId("query")
+                    .setLabel("اكتب جزءاً من الاسم")
+                    .setStyle(TextInputStyle.Short)
+                    .setRequired(true);
+                  modal.addComponents(new ActionRowBuilder().addComponents(input));
+                  await componentInteraction.showModal(modal);
+                  continue;
+                }
+
+                if (btnId.startsWith("page_prev_")) cache.page = Math.max(0, cache.page - 1);
+                else if (btnId.startsWith("page_next_")) {
+                  const { totalPages } = paginate(items, cache.page);
+                  cache.page = Math.min(totalPages - 1, cache.page + 1);
+                }
+
+                const { items: pageItems, totalPages, page } = paginate(items, cache.page);
+                const selectMenu = buildSelectMenu(pageItems, `select_${type}`, `اختر ${type === "roles" ? "الرتبة" : "الفئة"}`);
+                const pagRow = createPaginationRow(page, totalPages, type);
+                await componentInteraction.editReply({ components: [selectMenu, pagRow] });
+                continue;
+              }
+              await componentInteraction.deferUpdate().catch(() => {});
+              continue;
+            }
           }
+          // إذا وصلنا هنا من حالة send_panel بعد التحقق، نخرج من while
+          if (btnId === "send_panel") break;
         }
 
-        // التعامل مع القوائم المنسدلة
+        // --- القوائم المنسدلة ---
         if (componentInteraction.isStringSelectMenu()) {
           const value = componentInteraction.values[0];
           const customId = componentInteraction.customId;
 
-          // إذا كان الخيار يتطلب نافذة منبثقة
+          // خيارات تحتاج Modal
           const needsModal = ["buttonName", "buttonEmoji", "title", "description", "embedImage", "welcomeMessage"];
           if (needsModal.includes(value)) {
             let modal;
@@ -239,13 +316,9 @@ module.exports = {
                 ));
                 break;
             }
-            // عرض النافذة المنبثقة وانتظار الرد
             await componentInteraction.showModal(modal);
-            const modalSubmit = await componentInteraction.awaitModalSubmit({
-              time: 120_000,
-            });
+            const modalSubmit = await componentInteraction.awaitModalSubmit({ time: 120_000 });
             const input = modalSubmit.fields.getTextInputValue("input");
-            // تحديث الإعدادات
             switch (modalSubmit.customId) {
               case "modal_buttonName": settings.buttonName = input; break;
               case "modal_buttonEmoji": settings.buttonEmoji = input; break;
@@ -255,104 +328,146 @@ module.exports = {
               case "modal_welcome": settings.welcomeMessage = input; break;
             }
             await modalSubmit.deferUpdate();
-            await modalSubmit.editReply({
-              embeds: [generatePreviewEmbed()],
-              components: [mainButtons()],
-            });
-            continue; // متابعة الحلقة
+            await modalSubmit.editReply({ embeds: [generatePreviewEmbed()], components: [mainButtons()] });
+            continue;
           }
 
-          // معالجة باقي الخيارات بدون Modal
+          // خيارات مباشرة
           await componentInteraction.deferUpdate();
 
-          if (value === "thumbnail") settings.thumbnail = !settings.thumbnail;
-          else if (value === "welcomeType") settings.welcomeType = settings.welcomeType === "embed" ? "message" : "embed";
-          else if (value === "askReason") settings.askReason = !settings.askReason;
-          else if (customId === "basic_select" && value === "buttonStyle") {
-            const row = new ActionRowBuilder().addComponents(
-              new StringSelectMenuBuilder()
-                .setCustomId("select_buttonStyle")
-                .setPlaceholder("اختر لون الزر")
-                .addOptions(buttonStyles.map(s => ({ label: s.name, value: s.value })))
-            );
-            await componentInteraction.editReply({ components: [row, mainButtons()] });
-            continue;
-          }
-          else if (customId === "basic_select" && value === "supportRole") {
-            const roles = interaction.guild.roles.cache.filter(r => !r.managed && r.name !== "@everyone").first(25);
-            const row = new ActionRowBuilder().addComponents(
-              new StringSelectMenuBuilder()
-                .setCustomId("select_supportRole")
-                .setPlaceholder("اختر رتبة الدعم")
-                .addOptions(roles.map(r => ({ label: r.name, value: r.id })))
-            );
-            await componentInteraction.editReply({ components: [row, mainButtons()] });
-            continue;
-          }
-          else if (customId === "basic_select" && value === "category") {
-            const categories = interaction.guild.channels.cache.filter(c => c.type === ChannelType.GuildCategory).first(25);
-            const row = new ActionRowBuilder().addComponents(
-              new StringSelectMenuBuilder()
-                .setCustomId("select_category")
-                .setPlaceholder("اختر الفئة")
-                .addOptions(categories.map(c => ({ label: c.name, value: c.id })))
-            );
-            await componentInteraction.editReply({ components: [row, mainButtons()] });
-            continue;
-          }
-          else if (customId === "advanced_select" && value === "color") {
-            const row = new ActionRowBuilder().addComponents(
-              new StringSelectMenuBuilder()
-                .setCustomId("select_color")
-                .setPlaceholder("اختر لون التضمين")
-                .addOptions(embedColors.map(c => ({ label: c.name, value: c.value })))
-            );
-            await componentInteraction.editReply({ components: [row, mainButtons()] });
-            continue;
-          }
+          switch (customId) {
+            case "basic_select":
+              if (value === "buttonStyle") {
+                const row = new ActionRowBuilder().addComponents(
+                  new StringSelectMenuBuilder()
+                    .setCustomId("select_buttonStyle")
+                    .setPlaceholder("اختر لون الزر")
+                    .addOptions(buttonStyles.map(s => ({ label: s.name, value: s.value })))
+                );
+                await componentInteraction.editReply({ components: [row, mainButtons()] });
+              } else if (value === "supportRole") {
+                const allRoles = interaction.guild.roles.cache
+                  .filter(r => !r.managed && r.name !== "@everyone")
+                  .sort((a, b) => b.position - a.position)
+                  .map(r => ({ name: r.name, id: r.id }));
+                paginationCache.roles.items = allRoles;
+                paginationCache.roles.page = 0;
+                paginationCache.roles.filtered = null;
 
-          // تحديث عام للمعاينة
-          await componentInteraction.editReply({
-            embeds: [generatePreviewEmbed()],
-            components: [mainButtons()],
-          });
-          continue;
-        }
+                if (allRoles.length <= 25) {
+                  const menu = buildSelectMenu(allRoles, "select_supportRole", "اختر رتبة الدعم");
+                  await componentInteraction.editReply({ components: [menu, mainButtons()] });
+                } else {
+                  const { items } = paginate(allRoles, 0);
+                  const menu = buildSelectMenu(items, "select_supportRole", "اختر رتبة الدعم");
+                  const pagRow = createPaginationRow(0, Math.ceil(allRoles.length / 25), "roles");
+                  await componentInteraction.editReply({ components: [menu, pagRow] });
+                }
+              } else if (value === "category") {
+                const allCategories = interaction.guild.channels.cache
+                  .filter(c => c.type === ChannelType.GuildCategory)
+                  .sort((a, b) => a.position - b.position)
+                  .map(c => ({ name: c.name, id: c.id }));
+                paginationCache.categories.items = allCategories;
+                paginationCache.categories.page = 0;
+                paginationCache.categories.filtered = null;
 
-        // --- معالجة اختيارات القوائم الثانوية (بعد deferUpdate) ---
-        if (componentInteraction.isStringSelectMenu()) {
-          // القوائم الثانوية: select_buttonStyle, select_supportRole, select_category, select_color
-          await componentInteraction.deferUpdate().catch(() => {});
-          switch (componentInteraction.customId) {
-            case "select_buttonStyle":
-              settings.buttonStyle = componentInteraction.values[0];
+                if (allCategories.length <= 25) {
+                  const menu = buildSelectMenu(allCategories, "select_category", "اختر الفئة");
+                  await componentInteraction.editReply({ components: [menu, mainButtons()] });
+                } else {
+                  const { items } = paginate(allCategories, 0);
+                  const menu = buildSelectMenu(items, "select_category", "اختر الفئة");
+                  const pagRow = createPaginationRow(0, Math.ceil(allCategories.length / 25), "categories");
+                  await componentInteraction.editReply({ components: [menu, pagRow] });
+                }
+              }
               break;
+
+            case "advanced_select":
+              if (value === "thumbnail") settings.thumbnail = !settings.thumbnail;
+              else if (value === "welcomeType") settings.welcomeType = settings.welcomeType === "embed" ? "message" : "embed";
+              else if (value === "askReason") settings.askReason = !settings.askReason;
+              else if (value === "color") {
+                const row = new ActionRowBuilder().addComponents(
+                  new StringSelectMenuBuilder()
+                    .setCustomId("select_color")
+                    .setPlaceholder("اختر لون التضمين")
+                    .addOptions(embedColors.map(c => ({ label: c.name, value: c.value })))
+                );
+                await componentInteraction.editReply({ components: [row, mainButtons()] });
+                continue;
+              }
+              await componentInteraction.editReply({ embeds: [generatePreviewEmbed()], components: [mainButtons()] });
+              break;
+
             case "select_supportRole":
-              settings.supportRoleId = componentInteraction.values[0];
+              settings.supportRoleId = value;
+              paginationCache.roles.filtered = null;
+              await componentInteraction.editReply({ embeds: [generatePreviewEmbed()], components: [mainButtons()] });
               break;
+
             case "select_category":
-              settings.categoryId = componentInteraction.values[0];
+              settings.categoryId = value;
+              paginationCache.categories.filtered = null;
+              await componentInteraction.editReply({ embeds: [generatePreviewEmbed()], components: [mainButtons()] });
               break;
+
+            case "select_buttonStyle":
+              settings.buttonStyle = value;
+              await componentInteraction.editReply({ embeds: [generatePreviewEmbed()], components: [mainButtons()] });
+              break;
+
             case "select_color":
-              settings.color = componentInteraction.values[0];
+              settings.color = value;
+              await componentInteraction.editReply({ embeds: [generatePreviewEmbed()], components: [mainButtons()] });
               break;
+
+            default:
+              await componentInteraction.editReply({ embeds: [generatePreviewEmbed()], components: [mainButtons()] });
           }
-          await componentInteraction.editReply({
-            embeds: [generatePreviewEmbed()],
-            components: [mainButtons()],
-          });
           continue;
         }
 
-        // أي تفاعل غير معروف
-        await componentInteraction.deferUpdate().catch(() => {});
+        // --- Modal البحث ---
+        if (componentInteraction.type === 5 && componentInteraction.customId.startsWith("modal_search_")) {
+          const type = componentInteraction.customId.replace("modal_search_", "");
+          const query = componentInteraction.fields.getTextInputValue("query").toLowerCase();
+          const cache = paginationCache[type];
+          const allItems = cache.items;
+          const filtered = allItems.filter(item => item.name.toLowerCase().includes(query));
+          cache.filtered = filtered.length > 0 ? filtered : null;
+          cache.page = 0;
+
+          await componentInteraction.deferUpdate();
+          if (filtered.length === 0) {
+            await componentInteraction.editReply({
+              components: [
+                new ActionRowBuilder().addComponents(
+                  new ButtonBuilder().setCustomId("back_to_main").setLabel("↩️ لم يتم العثور، رجوع").setStyle(ButtonStyle.Danger)
+                ),
+              ],
+            });
+            continue;
+          }
+
+          if (filtered.length <= 25) {
+            const menu = buildSelectMenu(filtered, `select_${type}`, `اختر ${type === "roles" ? "الرتبة" : "الفئة"}`);
+            await componentInteraction.editReply({ components: [menu, mainButtons()] });
+          } else {
+            const { items } = paginate(filtered, 0);
+            const menu = buildSelectMenu(items, `select_${type}`, `اختر ${type === "roles" ? "الرتبة" : "الفئة"}`);
+            const pagRow = createPaginationRow(0, Math.ceil(filtered.length / 25), type);
+            await componentInteraction.editReply({ components: [menu, pagRow] });
+          }
+          continue;
+        }
+
       } catch (error) {
         console.error("خطأ في معالج الإعداد:", error);
         return interaction.editReply({
           components: [],
-          embeds: [
-            new EmbedBuilder().setColor("#FF0000").setDescription("⏰ انتهت مهلة الإعداد أو حدث خطأ."),
-          ],
+          embeds: [new EmbedBuilder().setColor("#FF0000").setDescription("⏰ انتهت مهلة الإعداد أو حدث خطأ.")],
         });
       }
     }
@@ -366,28 +481,19 @@ module.exports = {
     if (settings.buttonEmoji) btn.setEmoji(settings.buttonEmoji);
 
     const finalRow = new ActionRowBuilder().addComponents(btn);
-    await interaction.channel.send({
-      embeds: [generatePreviewEmbed()],
-      components: [finalRow],
-    });
+    await interaction.channel.send({ embeds: [generatePreviewEmbed()], components: [finalRow] });
 
-    await keyValueService.set(
-      "ticketDB",
-      `Ticket_${interaction.channel.id}_${randomId}`,
-      {
-        Support: settings.supportRoleId,
-        Category: settings.categoryId,
-        Internal: settings.welcomeMessage,
-        Type: settings.welcomeType,
-        Ask: settings.askReason,
-      }
-    );
+    await keyValueService.set("ticketDB", `Ticket_${interaction.channel.id}_${randomId}`, {
+      Support: settings.supportRoleId,
+      Category: settings.categoryId,
+      Internal: settings.welcomeMessage,
+      Type: settings.welcomeType,
+      Ask: settings.askReason,
+    });
 
     await interaction.editReply({
       components: [],
-      embeds: [
-        new EmbedBuilder().setColor("#00FF00").setDescription("✅ تم إنشاء نظام التذاكر بنجاح!"),
-      ],
+      embeds: [new EmbedBuilder().setColor("#00FF00").setDescription("✅ تم إنشاء نظام التذاكر بنجاح!")],
     });
   },
 };
