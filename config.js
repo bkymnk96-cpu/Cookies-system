@@ -1,6 +1,6 @@
 module.exports = {
   // التوكن محمي ويقرأ من متغيرات البيئة في Railway
-  token: process.env.DISCORD_TOKEN,
+  token: process.env.TOKEN,
   
   prefix: "!",
   

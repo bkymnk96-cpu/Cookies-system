@@ -9,7 +9,7 @@ module.exports = {
     execute(client) {
         client.user.setStatus("dnd");
         client.user.setActivity({
-            name: 'by onlyzer0x', 
+            name: 'Cookies', 
             type: ActivityType.Playing, 
         });
         

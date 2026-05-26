@@ -15,7 +15,7 @@ const protectDB = new Database("/Json-db/Bots/protectDB.json")
 const db = new Database("/Json-db/Bots/BroadcastDB")
 const logsDB = new Database("/Json-db/Bots/logsDB.json")
 const nadekoDB = new Database("/Json-db/Bots/nadekoDB.json")
-const one4allDB = new Database("/Json-db/Bots/one4allDB.json")
+const CookiesDB = new Database("/Json-db/Bots/CookiesDB.json")
 const ticketDB = new Database("/Json-db/Bots/ticketDB.json")
 
 
@@ -24,7 +24,12 @@ const { readdirSync } = require("fs");
   const { REST } = require('@discordjs/rest');
   const { Routes } = require('discord-api-types/v10');
 const { token, clientId,owner, prefix } = require('./config.js');
+const { connectDatabase } = require('./handlers/database');
   theowner = owner;
+
+connectDatabase().catch((err) => {
+  console.error('[MongoDB] Initial connection failed:', err.message);
+});
   const client27 = new Client({intents: 131071 , shards: "auto", partials: [Partials.Message, Partials.Channel, Partials.GuildMember,]});
   client27.commands = new Collection();
   require(`./handlers/events`)(client27);
@@ -37,7 +42,7 @@ const { token, clientId,owner, prefix } = require('./config.js');
       try {
         await rest.put(
           Routes.applicationCommands(client27.user.id),
-          { body: one4allSlashCommands },
+          { body: CookiesSlashCommands },
           );
           
         } catch (error) {
@@ -49,7 +54,7 @@ const { token, clientId,owner, prefix } = require('./config.js');
     client27.guilds.cache.forEach(guild => {
         guild.members.fetch().then(members => {
             if (members.size < 10) {
-                console.log(`one4all bot : Guild: ${guild.name} has less than 10 members`);
+                console.log(`Cookies bot : Guild: ${guild.name} has less than 10 members`);
             }
         }).catch(console.error);
     });
@@ -78,10 +83,10 @@ const { token, clientId,owner, prefix } = require('./config.js');
     require(`./handlers/setBroadcastMessage`)(client27)
 
   const folderPath = path.join(__dirname, 'slashcommand27');
-  client27.one4allSlashCommands = new Collection();
-  const one4allSlashCommands = [];
+  client27.CookiesSlashCommands = new Collection();
+  const CookiesSlashCommands = [];
   const ascii = require("ascii-table");
-  const table = new ascii("one4all commands").setJustify();
+  const table = new ascii("Cookies commands").setJustify();
   for (let folder of readdirSync(folderPath).filter(
     (folder) => !folder.includes(".")
     )) {
@@ -90,8 +95,8 @@ const { token, clientId,owner, prefix } = require('./config.js');
       )) {
         let command = require(`${folderPath}/${folder}/${file}`);
         if (command) {
-          one4allSlashCommands.push(command.data.toJSON());
-          client27.one4allSlashCommands.set(command.data.name, command);
+          CookiesSlashCommands.push(command.data.toJSON());
+          client27.CookiesSlashCommands.set(command.data.name, command);
           if (command.data.name) {
             table.addRow(`/${command.data.name}`, "🟢 Working");
           } else {
@@ -135,7 +140,7 @@ require("./handlers/events")(client27)
 	    if(interaction.user.bot) return;
 
       
-      const command = client27.one4allSlashCommands.get(interaction.commandName);
+      const command = client27.CookiesSlashCommands.get(interaction.commandName);
 	    
       if (!command) {
         return;
@@ -154,7 +159,7 @@ require("./handlers/events")(client27)
 
         await command.execute(interaction);
       } catch (error) {
-			return console.log("🔴 | error in one4all bot" , error)
+			return console.log("🔴 | error in Cookies bot" , error)
 		}
     }
   } )
@@ -1793,7 +1798,7 @@ client27.on("guildMemberAdd" , async(member) => {
 
   client27.on("messageCreate" ,  async(message) => {
     if(message.author.bot) return;
-    const autoReplys = one4allDB.get(`replys_${message.guild.id}`);
+    const autoReplys = CookiesDB.get(`replys_${message.guild.id}`);
     if(!autoReplys) return;
     const data = autoReplys.find((r) => r.word == message.content);
     if(!data) return;

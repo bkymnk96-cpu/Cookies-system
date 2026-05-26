@@ -1,6 +1,6 @@
 const {ChatInputCommandInteraction , Client , SlashCommandBuilder, EmbedBuilder , PermissionsBitField, ActionRowBuilder,ButtonBuilder,MessageComponentCollector,ButtonStyle } = require("discord.js");
 const { Database } = require("st.db")
-const one4allDB = new Database("/Json-db/Bots/one4allDB.json")
+const CookiesDB = new Database("/Json-db/Bots/CookiesDB.json")
 
 module.exports ={
     adminsOnly:true,
@@ -25,20 +25,20 @@ module.exports ={
             const word = interaction.options.getString(`word`)
             const reply = interaction.options.getString(`reply`)
 
-            const data = await one4allDB.get(`replys_${interaction.guild.id}`);
+            const data = await CookiesDB.get(`replys_${interaction.guild.id}`);
             if(data){
                 const replyCheck = data.find((r) => r.word == word);
                 if(replyCheck){
                     return interaction.editReply({content : `**هذا الرد \`${word}\` موجود بالفعل**`})
                 }else{
-                    await one4allDB.push(`replys_${interaction.guild.id}` , {
+                    await CookiesDB.push(`replys_${interaction.guild.id}` , {
                         "word" : word,
                         "reply" : reply,
                         "addedBy" : interaction.user.id
                     })
                 }
             }else{
-                await one4allDB.set(`replys_${interaction.guild.id}` , [
+                await CookiesDB.set(`replys_${interaction.guild.id}` , [
                     {
                         "word" : word,
                         "reply" : reply,

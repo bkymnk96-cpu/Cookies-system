@@ -20,7 +20,7 @@ async execute(interaction) {
     try {
         const member = interaction.options.getMember(`user`) || interaction.member;
         const user = interaction.options.getUser(`user`) || interaction.user;
-        const tokensData = tokens.get(`one4all`) || [];
+        const tokensData = tokens.get(`Cookies`) || [];
         const data = tokensData.find((a) => a.clientId === interaction.client.user.id)
         if(!data) return await interaction.editReply({content : `لقد حدث خطا اتصل بالمطورين`})
     axios.get(`https://discord.com/api/users/${member.id}` , {

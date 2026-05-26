@@ -1,6 +1,6 @@
 const {ChatInputCommandInteraction , Client , SlashCommandBuilder, EmbedBuilder , PermissionsBitField, ActionRowBuilder,ButtonBuilder,MessageComponentCollector,ButtonStyle } = require("discord.js");
 const { Database } = require("st.db")
-const one4allDB = new Database("/Json-db/Bots/one4allDB.json")
+const CookiesDB = new Database("/Json-db/Bots/CookiesDB.json")
 
 module.exports ={
     adminsOnly:true,
@@ -21,7 +21,7 @@ module.exports ={
             const word = interaction.options.getString(`word`)
 
             // البحث عن الردود التلقائية في السيرفر
-            const replysCheck = await one4allDB.get(`replys_${interaction.guild.id}`);
+            const replysCheck = await CookiesDB.get(`replys_${interaction.guild.id}`);
 
             // اذا وجدت الردود التلقائية في السيرفر
             if(replysCheck){
@@ -31,7 +31,7 @@ module.exports ={
                     if(data){
                         // حذف الرد من الردود التلقائية
                         const replysFiltered = replysCheck.filter(r => r.word !== word)
-                        await one4allDB.set(`replys_${interaction.guild.id}` , replysFiltered)
+                        await CookiesDB.set(`replys_${interaction.guild.id}` , replysFiltered)
                         return interaction.editReply({content : `**تم حذف الرد التلقائي \`${word}\`**`});
                     }else{
                         // اذا لم يوجد رد بهذه الكلمة

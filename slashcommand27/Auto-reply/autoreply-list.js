@@ -1,6 +1,6 @@
 const {ChatInputCommandInteraction , Client , SlashCommandBuilder, EmbedBuilder , PermissionsBitField, ActionRowBuilder,ButtonBuilder,MessageComponentCollector,ButtonStyle } = require("discord.js");
 const { Database } = require("st.db")
-const one4allDB = new Database("/Json-db/Bots/one4allDB.json")
+const CookiesDB = new Database("/Json-db/Bots/CookiesDB.json")
 
 module.exports ={
     adminsOnly:true,
@@ -17,7 +17,7 @@ module.exports ={
             const word = interaction.options.getString(`word`)
             const reply = interaction.options.getString(`reply`)
 
-            const data = await one4allDB.get(`replys_${interaction.guild.id}`);
+            const data = await CookiesDB.get(`replys_${interaction.guild.id}`);
             if(data){
                 if(data.length > 0){
                     const embed = new EmbedBuilder()
