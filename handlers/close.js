@@ -12,8 +12,8 @@ module.exports = (client7) => {
       if (customId === 'close') {
         const row = new ActionRowBuilder()
           .addComponents(
-            new ButtonBuilder().setCustomId('Yes11').setLabel('Close').setStyle(ButtonStyle.Danger),
-            new ButtonBuilder().setCustomId('No11').setLabel('Cancel').setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId('Yes11').setLabel('إغلاق').setEmoji('🔒').setStyle(ButtonStyle.Danger),
+            new ButtonBuilder().setCustomId('No11').setLabel('إلغاء').setStyle(ButtonStyle.Secondary),
           );
 
 
@@ -34,9 +34,9 @@ module.exports = (client7) => {
         .setColor("DarkButNotBlack");
         const roww = new ActionRowBuilder()
           .addComponents(
-            new ButtonBuilder().setCustomId('delete').setLabel('Delete').setStyle(ButtonStyle.Danger),
-            new ButtonBuilder().setCustomId('Open').setLabel('Open').setStyle(ButtonStyle.Success),
-            new ButtonBuilder().setCustomId('Tran').setLabel('Transcript').setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId('delete').setLabel('حذف').setEmoji('🗑️').setStyle(ButtonStyle.Danger),
+            new ButtonBuilder().setCustomId('Open').setLabel('فتح').setEmoji('🔓').setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId('Tran').setLabel('نسخة نصية').setEmoji('📄').setStyle(ButtonStyle.Secondary),
           );
 
 await interaction.deferUpdate();
