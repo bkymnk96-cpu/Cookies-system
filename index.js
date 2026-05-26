@@ -35,11 +35,11 @@ const path = require("path");
 const { readdirSync } = require("fs");
 const { REST } = require("@discordjs/rest");
 const { Routes } = require("discord-api-types/v10");
-
-const rest = new REST({ version: "10" }).setToken(token);
-const { token, clientId, owner, prefix } = require("./config.js");
+const { token, clientId, owner, prefix } = require("./config.js"); // ✅ استيراد أولاً
 const { connectDatabase } = require("./handlers/database");
 const theowner = owner;
+
+const rest = new REST({ version: "10" }).setToken(token); // ✅ الآن token معرف
 
 connectDatabase().catch((err) => {
   console.error("[MongoDB] Initial connection failed:", err.message);
