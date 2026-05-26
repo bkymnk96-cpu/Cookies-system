@@ -127,7 +127,7 @@ for (let file of readdirSync("./events/").filter((f) => f.endsWith(".js"))) {
 }
 
 // ── Ready Event ──
-client27.once("clientReady", async () => {
+client27.once("ready", async () => {
   // Register slash commands
   try {
     
@@ -1878,6 +1878,6 @@ process.on("unhandledRejection", (reason, promise) => {
 process.on("uncaughtExceptionMonitor", (reason) => {
   console.log(reason);
 });
-
+(
 // Login
 client27.login(token);
