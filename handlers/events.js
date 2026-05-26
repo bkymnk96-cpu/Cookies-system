@@ -8,25 +8,27 @@ module.exports = (client27) => {
   const events = readdirSync('./events/').filter((file) => file.endsWith('.js'));
   for (const file of events) {
     try {
+      console.log(`events loaded`)
       let pull = require(`../events/${file}`);
+      if (pull.event && typeof pull.event !== 'string') {
+        table.addRow(file, '❌');
+        
+        continue;
+      }
+      pull.event = pull.event || file.replace('.js', '');
+      if (typeof pull.run !== 'function') {
+        
+        table.addRow(file, '❌');
+        continue;
+      }
+      client27.on(pull.event, pull.run.bind(null, client27));
       
-      // إذا كان الملف يصدر دالة، قم باستدعائها مباشرة (تمرير الكلاينت)
-      if (typeof pull === 'function') {
-        pull(client27);
-        table.addRow(file, '✔');
-      }
-      // التوافق مع التنسيق القديم (event + run) إن وُجد
-      else if (pull.event && typeof pull.run === 'function') {
-        client27.on(pull.event, pull.run.bind(null, client27));
-        table.addRow(file, '✔');
-      }
-      else {
-        table.addRow(file, '❌ (تنسيق غير صالح)');
-      }
+      table.addRow(file, '✔');
     } catch (error) {
       console.error(`Error loading event '${file}':`, error);
-      table.addRow(file, '❌ (خطأ في التحميل)');
+      table.addRow(file, '❌');
     }
   }
-  console.log(table.toString());
 };
+
+console.log(table.toString())
