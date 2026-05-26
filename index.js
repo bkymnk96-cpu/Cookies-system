@@ -1878,6 +1878,6 @@ process.on("unhandledRejection", (reason, promise) => {
 process.on("uncaughtExceptionMonitor", (reason) => {
   console.log(reason);
 });
-(
+
 // Login
 client27.login(token);
