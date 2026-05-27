@@ -13,7 +13,7 @@ const keyValueService = require("../../services/keyValueService");
 module.exports = {
   adminsOnly: true,
   data: new SlashCommandBuilder()
-    .setName("to-select")
+    .setName("setup-ticket")
     .setDescription("تحويل أزرار التذاكر إلى قائمة منسدلة مع قالب ترحيب اختياري"),
 
   async execute(interaction) {
