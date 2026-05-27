@@ -554,10 +554,31 @@ module.exports = {
       });
     }
 
+    // ========== التعديل هنا: إضافة الزر إلى نفس صف الأزرار الموجود إن أمكن ==========
     const existingComponents = finalMessage.components || [];
-    const rows = existingComponents.length > 0 ? [...existingComponents] : [];
-    const buttonRow = new ActionRowBuilder().addComponents(newButton);
-    rows.push(buttonRow);
+    let rows = [...existingComponents];
+
+    // البحث عن أول صف يحتوي على مكون من نوع Button (type === 2)
+    const existingButtonRowIndex = rows.findIndex(row =>
+      row.components.some(component => component.type === 2)
+    );
+
+    if (existingButtonRowIndex !== -1) {
+      // نحول الصف الموجود إلى Builder لإضافة الزر الجديد
+      const targetRow = ActionRowBuilder.from(rows[existingButtonRowIndex]);
+      if (targetRow.components.length < 5) {
+        targetRow.addComponents(newButton);
+        rows[existingButtonRowIndex] = targetRow;
+      } else {
+        // الصف ممتلئ، ننشئ صفاً جديداً للزر
+        const newRow = new ActionRowBuilder().addComponents(newButton);
+        rows.push(newRow);
+      }
+    } else {
+      // لا يوجد صف أزرار، ننشئ صفاً جديداً
+      const newRow = new ActionRowBuilder().addComponents(newButton);
+      rows.push(newRow);
+    }
 
     await finalMessage.edit({ components: rows });
 
