@@ -3,7 +3,11 @@ const {
   ActionRowBuilder,
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
   MessageFlags,
+  ChannelType,
 } = require("discord.js");
 const keyValueService = require("../../services/keyValueService");
 
@@ -17,43 +21,41 @@ module.exports = {
         .setName("message_id")
         .setDescription("معرف الرسالة التي تحتوي على الأزرار")
         .setRequired(true)
-    )
-    .addStringOption((option) =>
-      option
-        .setName("description1")
-        .setDescription("وصف الخيار الأول")
-        .setRequired(false)
-    )
-    .addStringOption((option) =>
-      option
-        .setName("description2")
-        .setDescription("وصف الخيار الثاني")
-        .setRequired(false)
-    )
-    .addStringOption((option) =>
-      option
-        .setName("description3")
-        .setDescription("وصف الخيار الثالث")
-        .setRequired(false)
-    )
-    .addStringOption((option) =>
-      option
-        .setName("description4")
-        .setDescription("وصف الخيار الرابع")
-        .setRequired(false)
-    )
-    .addStringOption((option) =>
-      option
-        .setName("description5")
-        .setDescription("وصف الخيار الخامس")
-        .setRequired(false)
+        .setAutocomplete(true) // تفعيل الإكمال التلقائي
     )
     .addStringOption((option) =>
       option
         .setName("welcome_template")
-        .setDescription("اسم قالب الترحيب المستخدم عند فتح التذكرة (من أمر welcome-setup)")
+        .setDescription("اسم قالب الترحيب (يتم جلبه تلقائياً من قاعدة البيانات)")
         .setRequired(false)
+        .setAutocomplete(true) // تفعيل الإكمال التلقائي للقوالب
     ),
+
+  /**
+   * معالج الإكمال التلقائي للخيارات
+   */
+  async autocomplete(interaction) {
+    const focusedOption = interaction.options.getFocused(true);
+
+    if (focusedOption.name === "message_id") {
+      // جلب آخر 25 رسالة في القناة لعرض معرفاتها
+      const messages = await interaction.channel.messages.fetch({ limit: 25 });
+      const choices = messages
+        .filter((msg) => msg.author.id === interaction.client.user.id) // رسائل البوت فقط
+        .map((msg) => ({
+          name: `[${msg.id}] ${msg.content.slice(0, 50) || "(محتوى غير نصي)"}`,
+          value: msg.id,
+        }));
+      await interaction.respond(choices.slice(0, 25));
+    } else if (focusedOption.name === "welcome_template") {
+      // جلب قوالب الترحيب من قاعدة البيانات
+      const templates =
+        (await keyValueService.get("welcomeTemplates", interaction.guild.id)) || {};
+      const templateNames = Object.keys(templates);
+      const choices = templateNames.map((name) => ({ name, value: name }));
+      await interaction.respond(choices.slice(0, 25));
+    }
+  },
 
   async execute(interaction) {
     // التحقق من صلاحية الأدمن
@@ -65,23 +67,17 @@ module.exports = {
     }
 
     const messageId = interaction.options.getString("message_id");
-    const descriptions = [
-      interaction.options.getString("description1"),
-      interaction.options.getString("description2"),
-      interaction.options.getString("description3"),
-      interaction.options.getString("description4"),
-      interaction.options.getString("description5"),
-    ];
     const welcomeTemplateName = interaction.options.getString("welcome_template");
 
     // متغير لتخزين بيانات القالب إن وجد
     let templateData = null;
     if (welcomeTemplateName) {
-      const templates = (await keyValueService.get("welcomeTemplates", interaction.guild.id)) || {};
+      const templates =
+        (await keyValueService.get("welcomeTemplates", interaction.guild.id)) || {};
       templateData = templates[welcomeTemplateName];
       if (!templateData) {
         return interaction.reply({
-          content: `❌ قالب الترحيب "${welcomeTemplateName}" غير موجود. استخدم أمر \`/welcome-setup\` لإنشائه أولاً.`,
+          content: `❌ قالب الترحيب "${welcomeTemplateName}" غير موجود.`,
           flags: MessageFlags.Ephemeral,
         });
       }
@@ -102,29 +98,80 @@ module.exports = {
         });
       }
 
-      // تحديث بيانات التذاكر في قاعدة البيانات لكل زر
       const buttons = buttonRow.components.filter((c) => c.type === 2);
+      if (buttons.length === 0) {
+        return interaction.reply({
+          content: "❌ لا توجد أزرار صالحة.",
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      // الحد الأقصى للحقول في المودال هو 5
+      if (buttons.length > 5) {
+        return interaction.reply({
+          content: "❌ لا يمكن معالجة أكثر من 5 أزرار (حد المودال المسموح به).",
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      // بناء المودال لإدخال الأوصاف
+      const modal = new ModalBuilder()
+        .setCustomId(`ticket_select_modal_${messageId}`)
+        .setTitle("أوصاف الأزرار");
+
+      // إضافة حقل نصي لكل زر
+      const rows = buttons.map((button, index) => {
+        const textInput = new TextInputBuilder()
+          .setCustomId(`desc_${index}`)
+          .setLabel(`وصف الزر: ${button.label || `زر ${index + 1}`}`)
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setMaxLength(100);
+        return new ActionRowBuilder().addComponents(textInput);
+      });
+
+      modal.addComponents(rows);
+
+      // عرض المودال للمستخدم
+      await interaction.showModal(modal);
+
+      // انتظار رد المستخدم على المودال
+      const submitted = await interaction
+        .awaitModalSubmit({
+          time: 120_000, // دقيقتان
+          filter: (i) =>
+            i.customId === `ticket_select_modal_${messageId}` &&
+            i.user.id === interaction.user.id,
+        })
+        .catch(() => null);
+
+      if (!submitted) {
+        // إذا انتهت المهلة أو رفض المستخدم
+        return;
+      }
+
+      // استخراج الأوصاف من المودال
+      const descriptions = buttons.map((_, index) => {
+        const field = submitted.fields.getTextInputValue(`desc_${index}`);
+        return field || null;
+      });
+
+      // تحديث بيانات التذاكر في قاعدة البيانات لكل زر
       for (const button of buttons) {
         const customId = button.customId;
-        // جلب البيانات الحالية للتذكرة المرتبطة بهذا الزر
         const existingData = await keyValueService.get(
           "ticketDB",
           `Ticket_${interaction.channel.id}_${customId}`
         );
 
-        if (existingData) {
-          if (templateData) {
-            // تحديث رسالة الترحيب ونوعها بناءً على القالب المختار
-            existingData.Internal = `[template:${welcomeTemplateName}]`;
-            existingData.Type = "embed"; // قوالب welcome-setup تستخدم embed
-            // حفظ البيانات المعدلة
-            await keyValueService.set(
-              "ticketDB",
-              `Ticket_${interaction.channel.id}_${customId}`,
-              existingData
-            );
-          }
-          // إذا لم يتم اختيار قالب، نترك البيانات كما هي (لا تغيير)
+        if (existingData && templateData) {
+          existingData.Internal = `[template:${welcomeTemplateName}]`;
+          existingData.Type = "embed";
+          await keyValueService.set(
+            "ticketDB",
+            `Ticket_${interaction.channel.id}_${customId}`,
+            existingData
+          );
         }
       }
 
@@ -133,24 +180,18 @@ module.exports = {
         .setCustomId("ticket_select")
         .setPlaceholder("📋 اختر نوع المشكلة");
 
-      // إضافة خيار لكل زر
       buttons.forEach((button, index) => {
         const option = new StringSelectMenuOptionBuilder()
           .setLabel(button.label)
           .setValue(button.customId);
 
-        if (button.emoji) {
-          option.setEmoji(button.emoji);
-        }
-
-        if (descriptions[index]) {
-          option.setDescription(descriptions[index]);
-        }
+        if (button.emoji) option.setEmoji(button.emoji);
+        if (descriptions[index]) option.setDescription(descriptions[index]);
 
         selectMenu.addOptions(option);
       });
 
-      // إضافة خيار إعادة التعيين (Reset)
+      // إضافة خيار إعادة التعيين
       selectMenu.addOptions(
         new StringSelectMenuOptionBuilder()
           .setLabel("🔄 إعادة تعيين")
@@ -160,7 +201,7 @@ module.exports = {
       const selectRow = new ActionRowBuilder().addComponents(selectMenu);
       await message.edit({ components: [selectRow] });
 
-      // رسالة النجاح
+      // إرسال تأكيد نجاح العملية
       let successMessage = "✅ تم تحويل الأزرار إلى قائمة منسدلة بنجاح.";
       if (welcomeTemplateName) {
         successMessage += `\n📌 تم ربط القائمة بقالب الترحيب **${welcomeTemplateName}**.`;
@@ -168,16 +209,26 @@ module.exports = {
         successMessage += `\n⚠️ لم يتم تحديد قالب ترحيب، سيتم استخدام الرسائل المخزنة سابقاً.`;
       }
 
-      await interaction.reply({
+      await submitted.reply({
         content: successMessage,
         flags: MessageFlags.Ephemeral,
       });
     } catch (error) {
       console.error("خطأ في أمر to-select:", error);
-      return interaction.reply({
-        content: "❌ حدث خطأ أثناء محاولة تحويل الأزرار. تأكد من أن معرف الرسالة صحيح وأن البوت يملك الصلاحيات اللازمة.",
-        flags: MessageFlags.Ephemeral,
-      });
+      // إذا كان التفاعل ما زال مفتوحاً نرد عليه، وإلا نستخدم followUp
+      if (interaction.replied || interaction.deferred) {
+        await interaction.followUp({
+          content:
+            "❌ حدث خطأ أثناء محاولة تحويل الأزرار. تأكد من أن معرف الرسالة صحيح وأن البوت يملك الصلاحيات اللازمة.",
+          flags: MessageFlags.Ephemeral,
+        });
+      } else {
+        await interaction.reply({
+          content:
+            "❌ حدث خطأ أثناء محاولة تحويل الأزرار. تأكد من أن معرف الرسالة صحيح وأن البوت يملك الصلاحيات اللازمة.",
+          flags: MessageFlags.Ephemeral,
+        });
+      }
     }
   },
 };
