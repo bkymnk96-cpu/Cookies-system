@@ -170,7 +170,7 @@ module.exports = {
             // إنشاء السلكت منيو
             const selectMenu = new StringSelectMenuBuilder()
                 .setCustomId('ticket_select')
-                .setPlaceholder('Select Problem Type !');
+                .setPlaceholder('اختر نوع التذكرة من هنا!');  // تم تعريبها
 
             // تحويل الأزرار إلى خيارات
             buttonRow.components.forEach((button, index) => {
@@ -194,7 +194,7 @@ module.exports = {
             // زر الريسيت
             selectMenu.addOptions(
                 new StringSelectMenuOptionBuilder()
-                    .setLabel('Reset')
+                    .setLabel('إعادة تعيين')  // تم تعريبها
                     .setValue('reset')
             );
 
