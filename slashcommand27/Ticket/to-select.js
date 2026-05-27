@@ -4,6 +4,7 @@ const {
     StringSelectMenuBuilder,
     StringSelectMenuOptionBuilder,
     MessageFlags,
+    EmbedBuilder
 } = require('discord.js');
 
 const keyValueService = require('../../services/keyValueService');
@@ -22,13 +23,13 @@ module.exports = {
                 .setRequired(true)
         )
 
-        // اختيار القالب من القوالب المحفوظة
+        // اختيار القالب من القوالب المحفوظة (تم إزالة autocomplete)
         .addStringOption(option => {
             option
                 .setName('template')
-                .setDescription('اختر قالب الترحيب')
+                .setDescription('اختر قالب الترحيب (سيتم عرض القوالب في خطوة منفصلة)')
                 .setRequired(true)
-                .setAutocomplete(true);
+                // .setAutocomplete(true);  // تم إزالة autocomplete
 
             return option;
         })
@@ -63,38 +64,13 @@ module.exports = {
                 .setRequired(false)
         ),
 
-    // الاوتوكومبليت للقوالب
-    async autocomplete(interaction) {
-        const focusedValue = interaction.options.getFocused();
-
-        const templates =
-            (await keyValueService.get(
-                'welcomeTemplates',
-                interaction.guild.id
-            )) || {};
-
-        const choices = Object.keys(templates);
-
-        const filtered = choices
-            .filter(choice =>
-                choice.toLowerCase().includes(focusedValue.toLowerCase())
-            )
-            .slice(0, 25);
-
-        await interaction.respond(
-            filtered.map(choice => ({
-                name: choice,
-                value: choice,
-            }))
-        );
-    },
+    // تم إزالة دالة autocomplete بالكامل
 
     async execute(interaction) {
 
         const messageId = interaction.options.getString('message_id');
 
-        const templateName = interaction.options.getString('template');
-
+        // لن نستخدم template من الخيارات مباشرة، بل سنعرض قائمة منسدلة لاختيار القالب
         const descriptions = [
             interaction.options.getString('description1'),
             interaction.options.getString('description2'),
@@ -104,24 +80,77 @@ module.exports = {
         ];
 
         try {
+            // جلب القوالب من قاعدة البيانات
+            const templates = (await keyValueService.get('welcomeTemplates', interaction.guild.id)) || {};
+            const templateNames = Object.keys(templates);
 
-            // جلب القوالب
-            const templates =
-                (await keyValueService.get(
-                    'welcomeTemplates',
-                    interaction.guild.id
-                )) || {};
-
-            // التأكد من وجود القالب
-            const selectedTemplate = templates[templateName];
-
-            if (!selectedTemplate) {
+            if (templateNames.length === 0) {
                 return interaction.reply({
-                    content: '❌ القالب غير موجود.',
+                    content: '❌ لا توجد قوالب مسجلة. استخدم الأمر `/welcome-setup` أولاً.',
                     flags: MessageFlags.Ephemeral,
                 });
             }
 
+            // بناء قائمة منسدلة لاختيار القالب (مثل طريقة setup-ticket)
+            const selectOptions = [
+                {
+                    label: '🚫 بدون قالب',
+                    value: '__none__',
+                    description: 'لن يتم استخدام أي قالب ترحيب',
+                },
+                ...templateNames.map(name => ({
+                    label: name,
+                    value: `template_${name}`,
+                    description: `القالب: ${name}`,
+                })),
+            ];
+
+            const templateSelect = new StringSelectMenuBuilder()
+                .setCustomId('template_select_for_to_select')
+                .setPlaceholder('📄 اختر قالب الترحيب (أو بدون قالب)')
+                .addOptions(selectOptions);
+
+            const selectRow = new ActionRowBuilder().addComponents(templateSelect);
+
+            // إرسال رسالة مؤقتة لاختيار القالب
+            await interaction.reply({
+                content: '**الخطوة 1 من 2:** اختر قالب الترحيب الذي تريد استخدامه مع التذاكر.',
+                components: [selectRow],
+                flags: MessageFlags.Ephemeral,
+            });
+
+            // انتظار اختيار المستخدم
+            const filter = (i) => i.user.id === interaction.user.id && i.customId === 'template_select_for_to_select';
+            const collector = interaction.channel.createMessageComponentCollector({
+                filter,
+                max: 1,
+                time: 120000,
+            });
+
+            let selectedTemplate = null;
+            let templateName = null;
+            let isNone = false;
+
+            await new Promise((resolve, reject) => {
+                collector.on('collect', async (i) => {
+                    const selectedValue = i.values[0];
+                    if (selectedValue === '__none__') {
+                        isNone = true;
+                        selectedTemplate = null;
+                        templateName = null;
+                    } else {
+                        templateName = selectedValue.replace('template_', '');
+                        selectedTemplate = templates[templateName];
+                    }
+                    await i.deferUpdate();
+                    resolve(i);
+                });
+                collector.on('end', (collected, reason) => {
+                    if (collected.size === 0) reject(new Error('timeout'));
+                });
+            });
+
+            // بعد اختيار القالب، نكمل العملية
             // جلب الرسالة
             const message = await interaction.channel.messages.fetch(messageId);
 
@@ -131,8 +160,9 @@ module.exports = {
             );
 
             if (!buttonRow) {
-                return interaction.reply({
-                    content: 'لا توجد أزرار في الرسالة.',
+                return interaction.editReply({
+                    content: '❌ لا توجد أزرار في الرسالة.',
+                    components: [],
                     flags: MessageFlags.Ephemeral,
                 });
             }
@@ -144,7 +174,6 @@ module.exports = {
 
             // تحويل الأزرار إلى خيارات
             buttonRow.components.forEach((button, index) => {
-
                 const option = new StringSelectMenuOptionBuilder()
                     .setLabel(button.label)
                     .setValue(button.customId);
@@ -170,37 +199,56 @@ module.exports = {
             );
 
             // صف السلكت منيو
-            const selectRow = new ActionRowBuilder().addComponents(selectMenu);
+            const finalSelectRow = new ActionRowBuilder().addComponents(selectMenu);
 
             // تعديل الرسالة
             await message.edit({
-                components: [selectRow],
+                components: [finalSelectRow],
             });
 
-            // حفظ القالب المختار بنفس طريقة welcome
-            await keyValueService.set(
-                'ticketSelectTemplate',
-                interaction.guild.id,
-                {
-                    templateName,
-                    template: selectedTemplate,
-                }
-            );
+            // حفظ القالب المختار إذا لم يكن "بدون قالب"
+            if (!isNone && selectedTemplate) {
+                await keyValueService.set(
+                    'ticketSelectTemplate',
+                    interaction.guild.id,
+                    {
+                        templateName,
+                        template: selectedTemplate,
+                    }
+                );
+            }
 
-            // الرد
-            await interaction.reply({
-                content: `✅ تم تحويل الأزرار إلى قائمة خيارات وربطها بالقالب \`${templateName}\`.`,
+            // الرد النهائي
+            let replyMessage = `✅ تم تحويل الأزرار إلى قائمة خيارات.`;
+            if (!isNone && templateName) {
+                replyMessage += `\n📄 تم ربط القالب \`${templateName}\`.`;
+            } else {
+                replyMessage += `\n🚫 لم يتم استخدام أي قالب ترحيب.`;
+            }
+            if (descriptions.some(d => d)) {
+                replyMessage += `\n📝 تم إضافة الأوصاف بنجاح.`;
+            }
+
+            await interaction.editReply({
+                content: replyMessage,
+                components: [],
                 flags: MessageFlags.Ephemeral,
             });
 
         } catch (error) {
-
             console.error(error);
-
-            return interaction.reply({
-                content: 'سوي الأمر في نفس الروم اللي فيه الرسالة',
-                flags: MessageFlags.Ephemeral,
-            });
+            if (!interaction.replied && !interaction.deferred) {
+                return interaction.reply({
+                    content: '❌ حدث خطأ: تأكد من أنك تستخدم الأمر في نفس الروم الذي توجد فيه الرسالة، وحاول مرة أخرى.',
+                    flags: MessageFlags.Ephemeral,
+                });
+            } else {
+                return interaction.editReply({
+                    content: '❌ حدث خطأ أو انتهت المهلة. حاول مرة أخرى.',
+                    components: [],
+                    flags: MessageFlags.Ephemeral,
+                });
+            }
         }
     }
 };
