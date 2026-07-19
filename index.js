@@ -19,6 +19,9 @@ const keyValueService = require("./services/keyValueService");
 const { handleAutoReplyMessage } = require("./utils/autoReplyUtils");
 const { handleShortcutMessage } = require("./utils/shortcutUtils");
 const { handleDynamicHelpInteraction } = require("./utils/helpUtils");
+const { getWelcomeConfig, buildWelcomePayload, applyVariables } = require("./utils/welcomeUtils");
+const { handleAutoReactions } = require("./utils/autoReactionUtils");
+const { applyArabicCommandLocalization } = require("./utils/slashCommandArabic");
 const { trackTextActivity, handleVoiceStateActivity, initializeVoiceSessions } = require("./utils/activityUtils");
 const { canManageTicket, normalizeTicketMetadata, markTicketClosed, sendTicketCloseLog } = require("./utils/ticketUtils");
 const ms = require("ms");
@@ -37,7 +40,7 @@ const ms = require("ms");
 
 const path = require("path");
 const { readdirSync } = require("fs");
-const { token, clientId, owner } = require("./config.js"); // ✅ استيراد أولاً
+const { botTokens, owner } = require("./config.js"); // ✅ استيراد أولاً
 const { connectDatabase } = require("./handlers/database");
 const theowner = owner;
 
@@ -47,6 +50,8 @@ connectDatabase().catch((err) => {
   console.error("[MongoDB] فشل الاتصال الأولي:", err.message);
 });
 
+async function startSystemBot(token, botIndex = 1) {
+if (!token) return;
 const client27 = new Client({
   intents: 131071,
   shards: "auto",
@@ -91,7 +96,7 @@ for (let folder of readdirSync(folderPath).filter(
     const filePath = `${folderPath}/${folder}/${file}`;
     // حذف الملف من ذاكرة التخزين المؤقت لضمان تحميل النسخة الأحدث
     delete require.cache[require.resolve(filePath)];
-    let command = require(filePath);
+    let command = applyArabicCommandLocalization(require(filePath));
     if (command) {
       command.category = command.category || folder;
       command.filePath = command.filePath || filePath;
@@ -180,8 +185,13 @@ client27.on("voiceStateUpdate", async (oldState, newState) => {
   await handleVoiceStateActivity(oldState, newState).catch(console.error);
 });
 
-client27.once("ready", () => {
+client27.once("ready", async () => {
   initializeVoiceSessions(client27);
+  for (const guild of client27.guilds.cache.values()) {
+    await guild.invites.fetch().then((guildInvites) => {
+      invites[guild.id] = new Map(guildInvites.map((invite) => [invite.code, invite.uses]));
+    }).catch(() => null);
+  }
 });
 
 // ── InteractionCreate (slash commands) ──
@@ -221,7 +231,7 @@ client27.on("interactionCreate", async (interaction) => {
       }
     }
     try {
-      await command.execute(interaction);
+      await command.execute(interaction, client27);
     } catch (error) {
       return console.log("🔴 | خطأ في بوت Cookies", error);
     }
@@ -1184,9 +1194,9 @@ client27.on("inviteDelete", async (invite) => {
 
 client27.on("guildMemberAdd", async (member) => {
   try {
-    const welcomeChannelId = await keyValueService.get('systemDB', `welcome_channel_${member.guild.id}`);
-    const welcomeRoleId = await keyValueService.get('systemDB', `welcome_role_${member.guild.id}`);
-    const welcomeImage = await keyValueService.get('systemDB', `welcome_image_${member.guild.id}`);
+    const welcomeConfig = await getWelcomeConfig(member.guild.id);
+    if (!welcomeConfig.enabled || !welcomeConfig.channelId) return;
+    const welcomeRoleId = welcomeConfig.roleId;
 
     if (welcomeRoleId) {
       const role = member.guild.roles.cache.get(welcomeRoleId);
@@ -1200,30 +1210,18 @@ client27.on("guildMemberAdd", async (member) => {
       return inv.uses > prevUses;
     });
 
-    let inviterMention = "غير معروف";
-    if (usedInvite && usedInvite.inviter) {
-      inviterMention = `<@${usedInvite.inviter.id}>`;
+    const inviteData = usedInvite ? {
+      code: usedInvite.code,
+      uses: usedInvite.uses,
+      inviter: usedInvite.inviter,
+    } : {};
+
+    const welcomeChannel = member.guild.channels.cache.get(welcomeConfig.channelId);
+    if (welcomeChannel) await welcomeChannel.send(buildWelcomePayload(welcomeConfig, member, inviteData));
+
+    if (welcomeConfig.dmEnabled && welcomeConfig.dmMessage) {
+      await member.send({ content: applyVariables(welcomeConfig.dmMessage, member, inviteData) }).catch(() => null);
     }
-
-    const welcomeEmbed = new EmbedBuilder()
-      .setAuthor({ name: member.guild.name, iconURL: member.guild.iconURL({ dynamic: true }) })
-      .setFooter({ text: member.guild.name, iconURL: member.guild.iconURL({ dynamic: true }) })
-      .setColor("#787575")
-      .setTitle("مرحبا بك في السيرفر!")
-      .setDescription(`مرحبا ${member}، نورت **${member.guild.name}**! نتمنى لك وقتًا ممتعًا.`)
-      .addFields(
-        { name: "اسم العضو", value: member.user.tag, inline: true },
-        { name: "تمت دعوته بواسطة", value: inviterMention, inline: true },
-        { name: "الدعوة المستخدمة", value: usedInvite ? `||${usedInvite.code}||` : "دخول مباشر", inline: true },
-        { name: "رقم العضو", value: `${member.guild.memberCount}`, inline: true }
-      )
-      .setThumbnail(member.user.displayAvatarURL())
-      .setTimestamp();
-
-    if (welcomeImage) welcomeEmbed.setImage(welcomeImage);
-
-    const welcomeChannel = member.guild.channels.cache.get(welcomeChannelId);
-    if (welcomeChannel) await welcomeChannel.send({ embeds: [welcomeEmbed] });
 
     invites[member.guild.id] = new Map(newInvites.map((invite) => [invite.code, invite.uses]));
   } catch (error) {
@@ -1246,6 +1244,11 @@ client27.on("guildMemberAdd", async (member) => {
       }, 3000);
     });
   });
+});
+
+// ── Auto reactions ──
+client27.on("messageCreate", async (message) => {
+  await handleAutoReactions(message).catch(console.error);
 });
 
 // ── Auto reply ──
@@ -1273,4 +1276,16 @@ process.on("uncaughtExceptionMonitor", (reason) => {
 });
 
 // Login
-client27.login(token);
+  await client27.login(token);
+  return client27;
+}
+
+const uniqueTokens = [...new Set(botTokens.filter(Boolean))];
+if (uniqueTokens.length === 0) {
+  console.error("[Config] لا يوجد أي توكن بوت. ضع DISCORD_TOKEN أو DISCORD_TOKENS أو botTokens في config.js");
+  process.exit(1);
+}
+
+Promise.all(uniqueTokens.map((botToken, index) => startSystemBot(botToken, index + 1))).catch((error) => {
+  console.error("[Bots] فشل تشغيل أحد البوتات:", error);
+});
