@@ -1,40 +1,29 @@
-const { SlashCommandBuilder } = require('@discordjs/builders');
-const keyValueService = require("../../services/keyValueService");
+const { SlashCommandBuilder, ChannelType } = require('discord.js');
+const { saveWelcomeConfig } = require('../../utils/welcomeUtils');
 
 module.exports = {
-    adminsOnly: true,
-    data: new SlashCommandBuilder()
-        .setName('setup-welcome')
-        .setDescription('إعدادات الترحيب')
-        .addChannelOption(option => 
-            option.setName('channel')
-            .setDescription('روم الترحيب')
-            .setRequired(true))
-        .addRoleOption(option => 
-            option.setName('role')
-            .setDescription('رتبة لما يدخل شخص تجيه')
-            .setRequired(false))
-        .addStringOption(option =>
-            option.setName('image')
-            .setDescription('صورة لامبد الترحيب')
-            .setRequired(false)),
-    async execute(interaction) {
-        const channel = interaction.options.getChannel('channel');
-        const role = interaction.options.getRole('role');
-        const image = interaction.options.getString('image');
+  adminsOnly: true,
+  data: new SlashCommandBuilder()
+    .setName('setup-welcome')
+    .setDescription('إعداد سريع للترحيب')
+    .addChannelOption((option) => option.setName('channel').setDescription('روم الترحيب').addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement).setRequired(true))
+    .addRoleOption((option) => option.setName('role').setDescription('رتبة تعطى للعضو عند الدخول').setRequired(false))
+    .addStringOption((option) => option.setName('image').setDescription('رابط صورة الترحيب').setRequired(false))
+    .addStringOption((option) => option.setName('message').setDescription('نص الترحيب مع المتغيرات').setRequired(false)),
+  async execute(interaction) {
+    const channel = interaction.options.getChannel('channel');
+    const role = interaction.options.getRole('role');
+    const image = interaction.options.getString('image');
+    const message = interaction.options.getString('message');
 
-        await keyValueService.set('systemDB', `welcome_channel_${interaction.guild.id}`, channel.id);
-        if (role) {
-            await keyValueService.set('systemDB', `welcome_role_${interaction.guild.id}`, role.id);
-        } else {
-            await keyValueService.delete('systemDB', `welcome_role_${interaction.guild.id}`);
-        }
-        if (image) {
-            await keyValueService.set('systemDB', `welcome_image_${interaction.guild.id}`, image);
-        } else {
-            await keyValueService.delete('systemDB', `welcome_image_${interaction.guild.id}`);
-        }
+    await saveWelcomeConfig(interaction.guild.id, {
+      enabled: true,
+      channelId: channel.id,
+      roleId: role?.id || null,
+      image: image || null,
+      ...(message ? { message } : {}),
+    });
 
-        await interaction.reply({ content: `تم تحديث الاعدادات بنجاح .`, ephemeral: true });
-    },
+    await interaction.reply({ content: '✅ تم تحديث إعدادات الترحيب السريعة. استخدم `/welcome` للتحكم الكامل والمعاينة والمتغيرات.', ephemeral: true });
+  },
 };
