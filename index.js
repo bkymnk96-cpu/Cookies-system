@@ -21,6 +21,7 @@ const { handleShortcutMessage } = require("./utils/shortcutUtils");
 const { handleDynamicHelpInteraction } = require("./utils/helpUtils");
 const { getWelcomeConfig, buildWelcomePayload, applyVariables } = require("./utils/welcomeUtils");
 const { handleAutoReactions } = require("./utils/autoReactionUtils");
+const { applyArabicCommandLocalization } = require("./utils/slashCommandArabic");
 const { trackTextActivity, handleVoiceStateActivity, initializeVoiceSessions } = require("./utils/activityUtils");
 const { canManageTicket, normalizeTicketMetadata, markTicketClosed, sendTicketCloseLog } = require("./utils/ticketUtils");
 const ms = require("ms");
@@ -95,7 +96,7 @@ for (let folder of readdirSync(folderPath).filter(
     const filePath = `${folderPath}/${folder}/${file}`;
     // حذف الملف من ذاكرة التخزين المؤقت لضمان تحميل النسخة الأحدث
     delete require.cache[require.resolve(filePath)];
-    let command = require(filePath);
+    let command = applyArabicCommandLocalization(require(filePath));
     if (command) {
       command.category = command.category || folder;
       command.filePath = command.filePath || filePath;
