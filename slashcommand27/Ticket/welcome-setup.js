@@ -51,6 +51,7 @@ module.exports = {
       color: "#00FF00",
       thumbnail: false,
       image: "",
+      messageType: "embed",
     };
 
     const generatePreviewEmbed = () =>
@@ -64,6 +65,24 @@ module.exports = {
         .setImage(welcomeTemplate.image || null)
         .setFooter({ text: "معاينة رسالة الترحيب داخل التذكرة" })
         .setTimestamp();
+
+    const buildMessagePayload = () => {
+      if (welcomeTemplate.messageType === "message") {
+        let content = "";
+        if (welcomeTemplate.title) {
+          content += `**${welcomeTemplate.title}**\n`;
+        }
+        if (welcomeTemplate.description) {
+          content += `${welcomeTemplate.description}`;
+        }
+        if (!content) {
+          content = "رسالة ترحيب فارغة";
+        }
+        return { content };
+      } else {
+        return { embeds: [generatePreviewEmbed()] };
+      }
+    };
 
     const mainButtons = () =>
       new ActionRowBuilder().addComponents(
@@ -89,6 +108,12 @@ module.exports = {
             welcomeTemplate.thumbnail ? "✅ الأيقونة" : "❌ الأيقونة"
           )
           .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId("toggle_message_type")
+          .setLabel(
+            welcomeTemplate.messageType === "embed" ? "📋 إيمبد" : "📋 رسالة عادية"
+          )
+          .setStyle(ButtonStyle.Secondary),
       );
 
     const actionRow = () =>
@@ -103,9 +128,8 @@ module.exports = {
           .setStyle(ButtonStyle.Danger)
       );
 
-    // التعديل الوحيد: إزالة fetchReply: true من الرد الأولي
     await interaction.reply({
-      embeds: [generatePreviewEmbed()],
+      ...buildMessagePayload(),
       components: [mainButtons(), actionRow()],
     });
 
@@ -185,7 +209,7 @@ module.exports = {
           welcomeTemplate.title = m.fields.getTextInputValue("input");
           await m.deferUpdate();
           await m.editReply({
-            embeds: [generatePreviewEmbed()],
+            ...buildMessagePayload(),
             components: [mainButtons(), actionRow()],
           });
           continue;
@@ -209,7 +233,7 @@ module.exports = {
           welcomeTemplate.description = m.fields.getTextInputValue("input");
           await m.deferUpdate();
           await m.editReply({
-            embeds: [generatePreviewEmbed()],
+            ...buildMessagePayload(),
             components: [mainButtons(), actionRow()],
           });
           continue;
@@ -233,7 +257,7 @@ module.exports = {
           welcomeTemplate.image = m.fields.getTextInputValue("input");
           await m.deferUpdate();
           await m.editReply({
-            embeds: [generatePreviewEmbed()],
+            ...buildMessagePayload(),
             components: [mainButtons(), actionRow()],
           });
           continue;
@@ -260,7 +284,7 @@ module.exports = {
             welcomeTemplate.color = colorI.values[0];
             await colorI.deferUpdate();
             await colorI.editReply({
-              embeds: [generatePreviewEmbed()],
+              ...buildMessagePayload(),
               components: [mainButtons(), actionRow()],
             });
           }
@@ -272,7 +296,19 @@ module.exports = {
           welcomeTemplate.thumbnail = !welcomeTemplate.thumbnail;
           await i.deferUpdate();
           await i.editReply({
-            embeds: [generatePreviewEmbed()],
+            ...buildMessagePayload(),
+            components: [mainButtons(), actionRow()],
+          });
+          continue;
+        }
+
+        // --- تبديل نوع الرسالة (إيمبد / رسالة عادية) ---
+        if (i.customId === "toggle_message_type") {
+          welcomeTemplate.messageType =
+            welcomeTemplate.messageType === "embed" ? "message" : "embed";
+          await i.deferUpdate();
+          await i.editReply({
+            ...buildMessagePayload(),
             components: [mainButtons(), actionRow()],
           });
           continue;
