@@ -1,153 +1,32 @@
-const express = require('express');
+const http = require('http');
+const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const keyValueService = require('../services/keyValueService');
-const { SECTIONS, SECTION_MAP, scopedKey } = require('./registry');
-const { botTokens, owner } = require('../config');
-
-const COOKIE = 'zeus_session';
-const SECRET = process.env.DASHBOARD_SESSION_SECRET || process.env.SESSION_SECRET || 'zeus-dashboard-dev-secret-change-me';
-const API = 'https://discord.com/api/v10';
-
-function sign(value) { return crypto.createHmac('sha256', SECRET).update(value).digest('base64url'); }
-function encodeSession(data) { const payload = Buffer.from(JSON.stringify(data)).toString('base64url'); return `${payload}.${sign(payload)}`; }
-function decodeSession(raw) {
-  if (!raw || !raw.includes('.')) return null;
-  const [payload, sig] = raw.split('.');
-  if (sign(payload) !== sig) return null;
-  try { return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')); } catch { return null; }
-}
-function getCookie(req, name) { return Object.fromEntries((req.headers.cookie || '').split(';').map((v) => v.trim().split('=').map(decodeURIComponent)).filter((v) => v[0]))[name]; }
-function setCookie(res, data) { res.setHeader('Set-Cookie', `${COOKIE}=${encodeURIComponent(encodeSession(data))}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`); }
-function clearCookie(res) { res.setHeader('Set-Cookie', `${COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`); }
-function publicBaseUrl(req) { return process.env.DASHBOARD_BASE_URL || `${req.protocol}://${req.get('host')}`; }
-function clientId(clients) { return process.env.DISCORD_CLIENT_ID || process.env.CLIENT_ID || clients[0]?.user?.id; }
-function inviteUrl(req, clients, guildId) {
-  const id = clientId(clients);
-  return `https://discord.com/oauth2/authorize?client_id=${id}&permissions=8&scope=bot%20applications.commands&guild_id=${guildId || ''}&disable_guild_select=${guildId ? 'true' : 'false'}`;
-}
-async function discordFetch(session, endpoint) {
-  const res = await fetch(`${API}${endpoint}`, { headers: { Authorization: `Bearer ${session.accessToken}` } });
-  if (!res.ok) throw new Error(`Discord API ${res.status}`);
-  return res.json();
-}
-function canManage(guild) { return guild.owner || (BigInt(guild.permissions || 0) & BigInt(0x20)) === BigInt(0x20) || (BigInt(guild.permissions || 0) & BigInt(0x8)) === BigInt(0x8); }
-function getBotGuild(clients, guildId) { return clients.map((client) => client.guilds.cache.get(guildId)).find(Boolean); }
-async function ensureAuth(req, res, next) {
-  const session = decodeSession(getCookie(req, COOKIE));
-  if (!session?.accessToken) return res.status(401).json({ error: 'AUTH_REQUIRED' });
-  req.session = session;
-  next();
-}
-function serializeChannel(channel) { return { id: channel.id, name: channel.name, type: channel.type, parentId: channel.parentId || null }; }
-function serializeRole(role) { return { id: role.id, name: role.name, color: role.hexColor, position: role.position, managed: role.managed }; }
-async function assertGuildAccess(req, clients, guildId) {
-  const botGuild = getBotGuild(clients, guildId);
-  if (!botGuild) { const err = new Error('BOT_NOT_IN_GUILD'); err.status = 403; throw err; }
-  if (req.session.user?.id === owner) return botGuild;
-  const guilds = await discordFetch(req.session, '/users/@me/guilds');
-  const guild = guilds.find((item) => item.id === guildId);
-  if (!guild || !canManage(guild)) { const err = new Error('NO_PERMISSION'); err.status = 403; throw err; }
-  return botGuild;
-}
-async function readSection(guildId, section) {
-  const values = {};
-  for (const field of section.fields || []) {
-    const value = await keyValueService.get(field.ns, scopedKey(field, guildId));
-    values[field.key] = value === undefined ? field.default ?? null : value;
-  }
-  return values;
-}
-async function writeSection(guildId, section, payload) {
-  const saved = {};
-  for (const field of section.fields || []) {
-    if (!(field.key in payload)) continue;
-    await keyValueService.set(field.ns, scopedKey(field, guildId), payload[field.key]);
-    saved[field.key] = payload[field.key];
-  }
-  await keyValueService.set('systemDB', `dashboard_last_update_${guildId}`, { section: section.id, at: Date.now() });
-  return saved;
-}
-async function overviewFor(guild, clients) {
-  const checks = [
-    ['ticketDB', `LogsRoom_${guild.id}`], ['applyDB', `apply_settings_${guild.id}`], ['BroadcastDB', `tokens_${guild.id}`],
-    ['giveawayDB', `giveaways_${guild.id}`], ['suggestionsDB', `suggestions_room_${guild.id}`], ['feedbackDB', `feedback_room_${guild.id}`],
-    ['autolineDB', `line_channels_${guild.id}`], ['systemDB', `welcome_config_${guild.id}`], ['protectDB', `protectLog_room_${guild.id}`],
-    ['logsDB', `log_messagedelete_${guild.id}`], ['taxDB', `tax_room_${guild.id}`], ['shortcutDB', `shortcuts_${guild.id}`],
-  ];
-  const active = (await Promise.all(checks.map(([ns, key]) => keyValueService.has(ns, key).catch(() => false)))).filter(Boolean).length;
-  const giveaways = await keyValueService.get('giveawayDB', `giveaways_${guild.id}`) || [];
-  const ticketsOpen = guild.channels.cache.filter((channel) => channel.name?.startsWith('ticket') || channel.name?.includes('تذكرة')).size;
-  const protection = await Promise.all(['ban_status', 'antibots_status', 'antideleteroles_status', 'antideleterooms_status'].map((key) => keyValueService.get('protectDB', `${key}_${guild.id}`)));
-  return {
-    guild: { id: guild.id, name: guild.name, icon: guild.iconURL({ dynamic: true }), members: guild.memberCount, channels: guild.channels.cache.size, roles: guild.roles.cache.size },
-    bot: { tag: guild.client.user.tag, id: guild.client.user.id, status: guild.client.ws.status === 0 ? 'متصل' : 'يعيد الاتصال', uptime: guild.client.uptime, bots: clients.length },
-    database: { status: 'متصلة', activeSettings: active },
-    stats: {
-      servers: clients.reduce((sum, client) => sum + client.guilds.cache.size, 0), activeSettings: active, openTickets: ticketsOpen,
-      protections: protection.filter((v) => v === 'on').length, logChannels: checks.filter(([ns]) => ns === 'logsDB').length,
-      openApplications: await keyValueService.has('applyDB', `apply_${guild.id}`), broadcasts: (await keyValueService.get('BroadcastDB', `tokens_${guild.id}`) || []).length,
-      giveaways: giveaways.length,
-    },
-    lastUpdate: await keyValueService.get('systemDB', `dashboard_last_update_${guild.id}`) || null,
-  };
-}
-function startDashboard(clients) {
-  const app = express();
-  app.set('trust proxy', 1);
-  app.use(express.json({ limit: '2mb' }));
-  app.use(express.static(path.join(__dirname, 'public')));
-
-  app.get('/auth/discord', (req, res) => {
-    const id = clientId(clients); const secret = process.env.DISCORD_CLIENT_SECRET || process.env.CLIENT_SECRET;
-    if (!id || !secret) return res.redirect('/?oauth=missing');
-    const state = crypto.randomBytes(16).toString('hex');
-    setCookie(res, { state });
-    const redirectUri = `${publicBaseUrl(req)}/auth/discord/callback`;
-    res.redirect(`https://discord.com/oauth2/authorize?client_id=${id}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=identify%20guilds&state=${state}`);
-  });
-  app.get('/auth/discord/callback', async (req, res) => {
-    try {
-      const base = decodeSession(getCookie(req, COOKIE));
-      if (!base?.state || base.state !== req.query.state) return res.redirect('/?oauth=state');
-      const id = clientId(clients); const secret = process.env.DISCORD_CLIENT_SECRET || process.env.CLIENT_SECRET;
-      const redirectUri = `${publicBaseUrl(req)}/auth/discord/callback`;
-      const tokenRes = await fetch(`${API}/oauth2/token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ client_id: id, client_secret: secret, grant_type: 'authorization_code', code: req.query.code, redirect_uri: redirectUri }) });
-      if (!tokenRes.ok) throw new Error('TOKEN_EXCHANGE_FAILED');
-      const token = await tokenRes.json();
-      const session = { accessToken: token.access_token, refreshToken: token.refresh_token, expiresAt: Date.now() + (token.expires_in * 1000) };
-      session.user = await discordFetch(session, '/users/@me');
-      setCookie(res, session); res.redirect('/guilds');
-    } catch (error) { res.redirect('/?oauth=failed'); }
-  });
-  app.get('/auth/logout', (req, res) => { clearCookie(res); res.redirect('/'); });
-  app.get('/api/me', ensureAuth, (req, res) => res.json({ user: req.session.user }));
-  app.get('/api/guilds', ensureAuth, async (req, res) => {
-    const guilds = (await discordFetch(req.session, '/users/@me/guilds')).filter(canManage);
-    const botGuildIds = new Set(clients.flatMap((client) => Array.from(client.guilds.cache.keys())));
-    res.json({ guilds: guilds.map((guild) => ({ ...guild, iconUrl: guild.icon ? `https://cdn.discordapp.com/icons/${guild.id}/${guild.icon}.png` : null, hasBot: botGuildIds.has(guild.id), inviteUrl: inviteUrl(req, clients, guild.id) })) });
-  });
-  app.get('/api/guilds/:guildId/meta', ensureAuth, async (req, res, next) => { try {
-    const guild = await assertGuildAccess(req, clients, req.params.guildId);
-    res.json({ sections: SECTIONS, channels: guild.channels.cache.filter((c) => [0,5,13,15].includes(c.type)).map(serializeChannel), roles: guild.roles.cache.filter((r) => r.id !== guild.id).sort((a,b)=>b.position-a.position).map(serializeRole), overview: await overviewFor(guild, clients), inviteUrl: inviteUrl(req, clients, guild.id) });
-  } catch (e) { next(e); } });
-  app.get('/api/guilds/:guildId/sections/:sectionId', ensureAuth, async (req, res, next) => { try {
-    await assertGuildAccess(req, clients, req.params.guildId); const section = SECTION_MAP.get(req.params.sectionId); if (!section) return res.status(404).json({ error: 'SECTION_NOT_FOUND' });
-    res.json({ section, values: section.id === 'overview' ? {} : await readSection(req.params.guildId, section) });
-  } catch (e) { next(e); } });
-  app.post('/api/guilds/:guildId/sections/:sectionId', ensureAuth, async (req, res, next) => { try {
-    await assertGuildAccess(req, clients, req.params.guildId); const section = SECTION_MAP.get(req.params.sectionId); if (!section) return res.status(404).json({ error: 'SECTION_NOT_FOUND' });
-    const saved = await writeSection(req.params.guildId, section, req.body || {}); res.json({ ok: true, saved });
-  } catch (e) { next(e); } });
-  app.get('/api/guilds/:guildId/export', ensureAuth, async (req, res, next) => { try {
-    await assertGuildAccess(req, clients, req.params.guildId); const data = {}; for (const section of SECTIONS.filter((s) => s.fields?.length)) data[section.id] = await readSection(req.params.guildId, section); res.json({ guildId: req.params.guildId, exportedAt: new Date().toISOString(), data });
-  } catch (e) { next(e); } });
-  app.post('/api/guilds/:guildId/import', ensureAuth, async (req, res, next) => { try {
-    await assertGuildAccess(req, clients, req.params.guildId); const input = req.body?.data || {}; for (const section of SECTIONS.filter((s) => input[s.id])) await writeSection(req.params.guildId, section, input[s.id]); res.json({ ok: true });
-  } catch (e) { next(e); } });
-  app.get(['/guilds', '/dashboard/:guildId', '/dashboard/:guildId/:section'], (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
-  app.use((err, req, res, next) => res.status(err.status || 500).json({ error: err.message || 'SERVER_ERROR' }));
-  const port = Number(process.env.PORT || process.env.DASHBOARD_PORT || 3000);
-  app.listen(port, () => console.log(`[ZEUS Dashboard] يعمل على المنفذ ${port} (${botTokens.length} bot token(s))`));
-}
-module.exports = { startDashboard };
+const { URL } = require('url');
+const { PermissionsBitField } = require('discord.js');
+const service = require('./services/dashboardService');
+const sessions = new Map();
+const PORT = process.env.PORT || process.env.DASHBOARD_PORT || 3000;
+const BASE = (process.env.DASHBOARD_BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
+const CLIENT_ID = process.env.CLIENT_ID;
+const CLIENT_SECRET = process.env.CLIENT_SECRET;
+const COOKIE = 'zeus_dashboard_session';
+function parseCookies(req){return Object.fromEntries((req.headers.cookie||'').split(';').filter(Boolean).map(v=>{const i=v.indexOf('=');return [v.slice(0,i).trim(),decodeURIComponent(v.slice(i+1))]}));}
+function send(res,code,body,type='text/html; charset=utf-8',headers={}){res.writeHead(code,{ 'content-type':type, 'x-frame-options':'DENY','x-content-type-options':'nosniff',...headers});res.end(body)}
+function json(res,code,obj){send(res,code,JSON.stringify(obj), 'application/json; charset=utf-8')}
+async function readBody(req){return new Promise((resolve,reject)=>{let b=''; req.on('data',c=>{b+=c;if(b.length>2e6) req.destroy()}); req.on('end',()=>{try{resolve(b?JSON.parse(b):{})}catch(e){reject(e)}}); req.on('error',reject)})}
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function layout({title='ZEUS Dashboard',user,guilds=[],guildId='',content='',lang='ar',pathName='/'}){const nav=[['GENERAL',[['/','📊','Dashboard'],['/commands','⌘','Commands'],['/settings','⚙','Server Settings']]],['SYSTEMS',[['/welcome','👋','Welcome'],['/tickets','🎫','Tickets'],['/applications','📝','Applications'],['/suggestions','💡','Suggestions'],['/feedback','⭐','Feedback'],['/giveaways','🎉','Giveaways'],['/auto-reply','💬','Auto Reply'],['/auto-line','➖','Auto Line'],['/tax','🧮','Tax']]],['SECURITY',[['/protection','🛡','Protection'],['/logs','📜','Logs']]],['ACTIVITY',[['/activity','📈','Activity'],['/admin-points','🏅','Admin Points']]],['BROADCAST',[['/broadcast','📣','Broadcast']]]];return `<!doctype html><html lang="${lang}" dir="${lang==='ar'?'rtl':'ltr'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title><link rel="stylesheet" href="/assets/css/dashboard.css"></head><body><button class="mobile" data-menu>☰</button><aside class="sidebar"><div class="brand"><div class="logo">Z</div><div><b>ZEUS</b><small>Discord control center</small></div></div><div class="status"><span></span> Bot connected</div><form><select onchange="location='?guild='+this.value">${guilds.map(g=>`<option value="${g.id}" ${g.id===guildId?'selected':''}>${esc(g.name)}</option>`).join('')}</select></form>${nav.map(([h,items])=>`<section><h3>${h}</h3>${items.map(([href,ic,txt])=>`<a class="${pathName===href?'active':''}" href="${href}${guildId?'?guild='+guildId:''}"><span>${ic}</span>${txt}</a>`).join('')}</section>`).join('')}<section><h3>FUTURE</h3><a class="soon"><span>🧩</span> Auto Reactions <em>Coming soon</em></a></section></aside><main><nav class="top"><div><small>ZEUS / ${esc(title)}</small><h1>${esc(title)}</h1></div><div><button id="theme">🌙</button>${user?`<span class="pill">${esc(user.username)}</span><a href="/logout">Logout</a>`:''}</div></nav><div class="content">${content}</div></main><div id="toast"></div><script src="/assets/js/dashboard.js"></script></body></html>`}
+function loginPage(){return layout({title:'Login',content:`<div class="hero"><h2>ZEUS Dashboard</h2><p>تسجيل دخول Discord لإدارة إعدادات كل سيرفر بشكل مستقل عبر MongoDB.</p><a class="primary" href="/auth/discord">Login with Discord</a></div>`})}
+async function getSession(req){const sid=parseCookies(req)[COOKIE]; return sid && sessions.get(sid)}
+async function discord(path,token){const r=await fetch('https://discord.com/api/v10'+path,{headers:{authorization:`Bearer ${token}`}}); if(!r.ok) throw new Error('Discord API failed'); return r.json()}
+async function auth(req,res,u){if(!CLIENT_ID||!CLIENT_SECRET)return send(res,500,'Missing CLIENT_ID/CLIENT_SECRET'); const redirect=`${BASE}/auth/discord/callback`; if(u.pathname==='/auth/discord'){const state=crypto.randomBytes(16).toString('hex'); sessions.set(state,{oauth:true}); return send(res,302,'', 'text/plain',{location:`https://discord.com/oauth2/authorize?client_id=${CLIENT_ID}&response_type=code&redirect_uri=${encodeURIComponent(redirect)}&scope=identify%20guilds&state=${state}`})} const state=u.searchParams.get('state'); if(!sessions.get(state)) return send(res,401,'Invalid OAuth state'); const body=new URLSearchParams({client_id:CLIENT_ID,client_secret:CLIENT_SECRET,grant_type:'authorization_code',code:u.searchParams.get('code'),redirect_uri:redirect}); const tr=await fetch('https://discord.com/api/v10/oauth2/token',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body}); const tok=await tr.json(); const [user,guilds]=await Promise.all([discord('/users/@me',tok.access_token),discord('/users/@me/guilds',tok.access_token)]); const sid=crypto.randomBytes(32).toString('hex'); sessions.set(sid,{user,guilds:guilds.filter(g=>(BigInt(g.permissions)&BigInt(PermissionsBitField.Flags.ManageGuild))||g.owner),token:tok.access_token}); return send(res,302,'','text/plain',{'set-cookie':`${COOKIE}=${sid}; HttpOnly; Path=/; SameSite=Lax; Max-Age=604800${BASE.startsWith('https')?'; Secure':''}`,location:'/'})}
+async function resolveGuild(req,session,u,client){const guildId=u.searchParams.get('guild')||session.guilds[0]?.id; const allowed=session.guilds.some(g=>g.id===guildId); const guild=client.guilds.cache.get(guildId); if(!allowed||!guild) return null; return guild;}
+function cards(stats){return `<div class="grid stats">${Object.entries(stats).map(([k,v])=>`<div class="card"><small>${k}</small><strong>${k==='uptime'?Math.floor(v/60)+'m':esc(v)}</strong><p>Real runtime data</p></div>`).join('')}</div>`}
+function systemCards(mods,gid){return `<h2>Systems</h2><div class="grid systems">${mods.map(m=>`<div class="card"><div class="row"><h3>${esc(m.title.en)}</h3><span class="badge ${m.enabled?'on':'off'}">${m.enabled?'Enabled':'Disabled'}</span></div><p>${esc(m.description.en)}</p><small>${m.count||0} configured items</small><a class="primary" href="${m.route}?guild=${gid}">Open settings</a></div>`).join('')}</div>`}
+async function page(req,res,u,client){const session=await getSession(req); if(!session)return send(res,200,loginPage()); if(u.pathname==='/logout'){return send(res,302,'','text/plain',{'set-cookie':`${COOKIE}=; Path=/; Max-Age=0`,location:'/'})} const guild=await resolveGuild(req,session,u,client); if(!guild)return send(res,403,'No authorized guild with ZEUS bot was found.'); const base={user:session.user,guilds:session.guilds,guildId:guild.id,pathName:u.pathname}; if(u.pathname==='/api/resources')return json(res,200,await service.getGuildResources(guild)); if(u.pathname==='/api/commands'&&req.method==='GET')return json(res,200,await service.getCommandSettings(guild.id,client)); if(u.pathname==='/api/commands'&&req.method==='POST')return json(res,200,{ok:true,data:await service.saveCommandSettings(guild.id,await readBody(req))}); const mod=u.pathname.slice(1); if(u.pathname.startsWith('/api/module/')){const id=u.pathname.split('/').pop(); if(req.method==='GET')return json(res,200,await service.getModuleConfig(guild.id,id)); if(req.method==='POST')return json(res,200,{ok:true,data:await service.saveModuleConfig(guild.id,id,await readBody(req))});}
+ if(u.pathname==='/api/broadcast'&&req.method==='GET')return json(res,200,await service.getBroadcast(guild.id)); if(u.pathname==='/api/broadcast'&&req.method==='POST')return json(res,200,{ok:true,data:await service.saveBroadcast(guild.id,await readBody(req))}); if(u.pathname==='/api/activity')return json(res,200,await service.getActivity(guild));
+ let content=''; let title='Dashboard'; if(u.pathname==='/'){const d=await service.getDashboard(guild,client); content=cards(d.stats)+systemCards(d.modules,guild.id)} else if(u.pathname==='/commands'){title='Commands'; content=`<div data-page="commands"><div class="toolbar"><input class="search" placeholder="Search commands"><button data-enable-all>Enable All</button><button data-disable-all>Disable All</button></div><div id="commands" class="grid"></div><div class="savebar"><button data-reset>Reset</button><button data-save-commands>Save changes</button></div></div>`} else if(u.pathname==='/activity'){title='Activity'; content=`<div data-page="activity"><div id="activity" class="grid"></div></div>`} else if(u.pathname==='/broadcast'){title='Broadcast'; content=`<div data-page="broadcast"><textarea id="broadcastMessage" placeholder="Broadcast message"></textarea><div id="tokens"></div><button data-remove-tokens>Remove all tokens</button><div class="savebar"><button data-save-broadcast>Save</button></div></div>`} else {const id=mod||'settings'; title=id; content=`<div data-page="module" data-module="${id}"><div class="config-grid"><label>Enabled <input type="checkbox" name="enabled"></label><label>Channel <select name="channelId" data-resource="channels"></select></label><label>Role <select name="roleId" data-resource="roles"></select></label><label>Color <input type="color" name="color" value="#5865f2"></label><label>Message <textarea name="message"></textarea></label></div>${id==='welcome'?'<div class="welcome-editor"><div id="welcomePreview"><div id="avatar"></div></div><input name="image" placeholder="Background image URL"><input type="range" name="avatarSize" min="40" max="240"><input type="range" name="avatarX" min="0" max="100"><input type="range" name="avatarY" min="0" max="100"><p>{member} {username} {tag} {user_id} {server} {server_id} {member_count} {inviter} {invite_code} {invite_uses} {created_at} {joined_at}</p></div>':''}<div class="savebar"><button data-reset>Reset</button><button data-save-module>Save changes</button></div></div>`}
+ return send(res,200,layout({...base,title,content}));}
+function startDashboard(client){const server=http.createServer(async(req,res)=>{try{const u=new URL(req.url,BASE); if(u.pathname.startsWith('/assets/')){const f=path.join(__dirname,'public',u.pathname.replace('/assets/','')); if(!f.startsWith(path.join(__dirname,'public'))||!fs.existsSync(f))return send(res,404,'not found'); return send(res,200,fs.readFileSync(f), f.endsWith('.css')?'text/css':'application/javascript')} if(u.pathname.startsWith('/auth/discord'))return auth(req,res,u); return page(req,res,u,client)}catch(e){console.error(e); json(res,500,{error:e.message})}}); server.listen(PORT,()=>console.log(`[Dashboard] ${BASE}`)); return server}
+module.exports={startDashboard};
