@@ -22,6 +22,7 @@ const { handleDynamicHelpInteraction } = require("./utils/helpUtils");
 const { getWelcomeConfig, buildWelcomePayload, applyVariables } = require("./utils/welcomeUtils");
 const { handleAutoReactions } = require("./utils/autoReactionUtils");
 const { applyArabicCommandLocalization } = require("./utils/slashCommandArabic");
+const { startDashboard } = require("./dashboard/server");
 const { trackTextActivity, handleVoiceStateActivity, initializeVoiceSessions } = require("./utils/activityUtils");
 const { canManageTicket, normalizeTicketMetadata, markTicketClosed, sendTicketCloseLog } = require("./utils/ticketUtils");
 const ms = require("ms");
@@ -41,8 +42,6 @@ const ms = require("ms");
 const path = require("path");
 const { readdirSync } = require("fs");
 const { botTokens, owner } = require("./config.js"); // ✅ استيراد أولاً
-const { startDashboard } = require("./dashboard/server");
-const { canRunCommand } = require("./dashboard/services/commandConfigService");
 const { connectDatabase } = require("./handlers/database");
 const theowner = owner;
 
@@ -142,9 +141,6 @@ for (let file of readdirSync("./events/").filter((f) => f.endsWith(".js"))) {
 
 // ── Ready Event ──
 client27.once("clientReady", async () => {
-  if (botIndex === 1 && process.env.DASHBOARD_ENABLED !== "false") {
-    startDashboard(client27);
-  }
   // Register slash commands
   try {
     
@@ -236,10 +232,6 @@ client27.on("interactionCreate", async (interaction) => {
       }
     }
     try {
-      const dashboardPermission = await canRunCommand(interaction, command);
-      if (!dashboardPermission.ok) {
-        return interaction.reply({ content: `❗ **${dashboardPermission.reason}**`, ephemeral: true });
-      }
       await command.execute(interaction, client27);
     } catch (error) {
       return console.log("🔴 | خطأ في بوت Cookies", error);
@@ -1295,6 +1287,8 @@ if (uniqueTokens.length === 0) {
   process.exit(1);
 }
 
-Promise.all(uniqueTokens.map((botToken, index) => startSystemBot(botToken, index + 1))).catch((error) => {
-  console.error("[Bots] فشل تشغيل أحد البوتات:", error);
-});
+Promise.all(uniqueTokens.map((botToken, index) => startSystemBot(botToken, index + 1)))
+  .then((clients) => startDashboard(clients.filter(Boolean)))
+  .catch((error) => {
+    console.error("[Bots] فشل تشغيل أحد البوتات:", error);
+  });
