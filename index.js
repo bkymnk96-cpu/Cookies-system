@@ -42,6 +42,10 @@ const path = require("path");
 const { readdirSync } = require("fs");
 const { botTokens, owner } = require("./config.js"); // ✅ استيراد أولاً
 const { startDashboard } = require("./dashboard/server");
+<<<<<<< HEAD
+=======
+const { canRunCommand } = require("./dashboard/services/commandConfigService");
+>>>>>>> codex/-dashboard-zeus
 const { connectDatabase } = require("./handlers/database");
 const theowner = owner;
 
@@ -145,6 +149,9 @@ for (let file of readdirSync("./events/").filter((f) => f.endsWith(".js"))) {
 
 // ── Ready Event ──
 client27.once("clientReady", async () => {
+  if (botIndex === 1 && process.env.DASHBOARD_ENABLED !== "false") {
+    startDashboard(client27);
+  }
   // Register slash commands
   try {
     
@@ -253,6 +260,10 @@ client27.on("interactionCreate", async (interaction) => {
       }
     }
     try {
+      const dashboardPermission = await canRunCommand(interaction, command);
+      if (!dashboardPermission.ok) {
+        return interaction.reply({ content: `❗ **${dashboardPermission.reason}**`, ephemeral: true });
+      }
       await command.execute(interaction, client27);
     } catch (error) {
       return console.log("🔴 | خطأ في بوت Cookies", error);
