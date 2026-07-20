@@ -42,10 +42,7 @@ const path = require("path");
 const { readdirSync } = require("fs");
 const { botTokens, owner } = require("./config.js"); // ✅ استيراد أولاً
 const { startDashboard } = require("./dashboard/server");
-<<<<<<< HEAD
-=======
 const { canRunCommand } = require("./dashboard/services/commandConfigService");
->>>>>>> codex/-dashboard-zeus
 const { connectDatabase } = require("./handlers/database");
 const theowner = owner;
 
@@ -65,10 +62,6 @@ const client27 = new Client({
 client27.commands = new Collection();
 client27.events = new Collection();
 client27.setMaxListeners(1000);
-if (!global.__ZEUS_DASHBOARD_STARTED__) {
-  global.__ZEUS_DASHBOARD_STARTED__ = true;
-  startDashboard(client27);
-}
 
 // Handlers registration (once)
 require(`./handlers/events`)(client27);
@@ -224,23 +217,6 @@ client27.on("interactionCreate", async (interaction) => {
     if (interaction.user.bot) return;
     const command = client27.CookiesSlashCommands.get(interaction.commandName);
     if (!command) return;
-    const dashboardCommandSettings = await keyValueService.get("systemDB", `command_settings_${interaction.guild.id}`) || {};
-    const dashboardCommandConfig = dashboardCommandSettings[interaction.commandName];
-    if (dashboardCommandConfig?.enabled === false) {
-      return interaction.reply({ content: "❗ هذا الأمر معطل من لوحة تحكم ZEUS.", ephemeral: true });
-    }
-    if (Array.isArray(dashboardCommandConfig?.allowedRoles) && dashboardCommandConfig.allowedRoles.length && !interaction.member.roles.cache.some((role) => dashboardCommandConfig.allowedRoles.includes(role.id))) {
-      return interaction.reply({ content: "❗ لا تملك رتبة مسموحة لاستخدام هذا الأمر.", ephemeral: true });
-    }
-    if (Array.isArray(dashboardCommandConfig?.deniedRoles) && interaction.member.roles.cache.some((role) => dashboardCommandConfig.deniedRoles.includes(role.id))) {
-      return interaction.reply({ content: "❗ رتبتك ممنوعة من استخدام هذا الأمر.", ephemeral: true });
-    }
-    if (Array.isArray(dashboardCommandConfig?.allowedChannels) && dashboardCommandConfig.allowedChannels.length && !dashboardCommandConfig.allowedChannels.includes(interaction.channelId)) {
-      return interaction.reply({ content: "❗ هذا الأمر غير مسموح في هذه القناة.", ephemeral: true });
-    }
-    if (Array.isArray(dashboardCommandConfig?.deniedChannels) && dashboardCommandConfig.deniedChannels.includes(interaction.channelId)) {
-      return interaction.reply({ content: "❗ هذا الأمر ممنوع في هذه القناة.", ephemeral: true });
-    }
     if (command.ownersOnly === true && owner != interaction.user.id) {
       return interaction.reply({
         content: `❗ ***لا تستطيع استخدام هذا الامر***`,
