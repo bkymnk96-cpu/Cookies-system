@@ -22,6 +22,7 @@ const { handleDynamicHelpInteraction } = require("./utils/helpUtils");
 const { getWelcomeConfig, buildWelcomePayload, applyVariables } = require("./utils/welcomeUtils");
 const { handleAutoReactions } = require("./utils/autoReactionUtils");
 const { applyArabicCommandLocalization } = require("./utils/slashCommandArabic");
+const { startDashboard } = require("./dashboard/server");
 const { trackTextActivity, handleVoiceStateActivity, initializeVoiceSessions } = require("./utils/activityUtils");
 const { canManageTicket, normalizeTicketMetadata, markTicketClosed, sendTicketCloseLog } = require("./utils/ticketUtils");
 const ms = require("ms");
@@ -1286,6 +1287,8 @@ if (uniqueTokens.length === 0) {
   process.exit(1);
 }
 
-Promise.all(uniqueTokens.map((botToken, index) => startSystemBot(botToken, index + 1))).catch((error) => {
-  console.error("[Bots] فشل تشغيل أحد البوتات:", error);
-});
+Promise.all(uniqueTokens.map((botToken, index) => startSystemBot(botToken, index + 1)))
+  .then((clients) => startDashboard(clients.filter(Boolean)))
+  .catch((error) => {
+    console.error("[Bots] فشل تشغيل أحد البوتات:", error);
+  });
