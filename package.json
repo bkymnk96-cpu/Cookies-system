@@ -29,7 +29,6 @@
     "probot-transfer-uniqx": "^1.0.0",
     "st.db": "file:./st-db-shim",
     "uuid": "^10.0.0",
-    "mongoose": "^8.15.1",
-    "express": "^4.19.2"
+    "mongoose": "^8.15.1"
   }
 }
