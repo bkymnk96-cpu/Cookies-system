@@ -21,6 +21,8 @@ const { handleShortcutMessage } = require("./utils/shortcutUtils");
 const { handleDynamicHelpInteraction } = require("./utils/helpUtils");
 const { getWelcomeConfig, buildWelcomePayload, applyVariables } = require("./utils/welcomeUtils");
 const { handleAutoReactions } = require("./utils/autoReactionUtils");
+const { enforceCommandPolicy } = require("./utils/commandPolicyUtils");
+const { startDashboard } = require("./dashboard/server");
 const { applyArabicCommandLocalization } = require("./utils/slashCommandArabic");
 const { trackTextActivity, handleVoiceStateActivity, initializeVoiceSessions } = require("./utils/activityUtils");
 const { canManageTicket, normalizeTicketMetadata, markTicketClosed, sendTicketCloseLog } = require("./utils/ticketUtils");
@@ -231,6 +233,10 @@ client27.on("interactionCreate", async (interaction) => {
       }
     }
     try {
+      const policy = await enforceCommandPolicy(interaction);
+      if (!policy.allowed) {
+        return interaction.reply({ content: `❗ **${policy.reason}**`, ephemeral: true });
+      }
       await command.execute(interaction, client27);
     } catch (error) {
       return console.log("🔴 | خطأ في بوت Cookies", error);
@@ -1277,6 +1283,7 @@ process.on("uncaughtExceptionMonitor", (reason) => {
 
 // Login
   await client27.login(token);
+  if (botIndex === 1) startDashboard(client27);
   return client27;
 }
 

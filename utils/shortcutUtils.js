@@ -1,5 +1,6 @@
 const keyValueService = require("../services/keyValueService");
 const { PermissionsBitField } = require("discord.js");
+const { enforceCommandPolicy } = require("./commandPolicyUtils");
 
 function getMessageArgs(message, trigger) {
   return message.content.slice(trigger.length).trim().split(/\s+/).filter(Boolean);
@@ -200,6 +201,11 @@ async function executeSlashCommandFromMessage(message, commandName, trigger) {
   }
   const args = getMessageArgs(message, trigger);
   const fakeInteraction = createShortcutInteraction(message, command, args);
+  const policy = await enforceCommandPolicy(fakeInteraction);
+  if (!policy.allowed) {
+    await message.reply(`❗ **${policy.reason}**`);
+    return true;
+  }
   await command.execute(fakeInteraction);
   return true;
 }
