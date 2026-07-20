@@ -4,9 +4,7 @@
   "description": "بوت نظام متكامل",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "dashboard": "DASHBOARD_ENABLED=true node index.js",
-    "check": "node --check index.js && find dashboard -name \"*.js\" -print0 | xargs -0 -n1 node --check"
+    "start": "node index.js"
   },
   "keywords": [
     "system",
@@ -29,6 +27,7 @@
     "probot-transfer-uniqx": "^1.0.0",
     "st.db": "file:./st-db-shim",
     "uuid": "^10.0.0",
-    "mongoose": "^8.15.1"
+    "mongoose": "^8.15.1",
+    "express": "^4.19.2"
   }
 }
