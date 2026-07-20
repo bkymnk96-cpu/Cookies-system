@@ -1,22 +1,153 @@
-const http = require('http');
-const fs = require('fs');
+const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
-const { PermissionsBitField } = require('discord.js');
-const { registerClient, getClient } = require('./services/runtimeRegistry');
-const cfg = require('./services/guildConfigService');
-const cmd = require('./services/commandConfigService');
-const CLIENT_ID = process.env.CLIENT_ID || '1508595237302435850';
-const BASE = process.env.DASHBOARD_BASE_URL || `http://localhost:${process.env.DASHBOARD_PORT || 3000}`;
-const sessions = new Map();
-function parseCookies(req){return Object.fromEntries(String(req.headers.cookie||'').split(';').filter(Boolean).map(x=>x.trim().split('=').map(decodeURIComponent)))}
-function send(res,code,body,type='text/html; charset=utf-8'){res.writeHead(code,{'Content-Type':type});res.end(body)}
-function redirect(res,to){res.writeHead(302,{Location:to});res.end()}
-async function body(req){let b=''; for await (const c of req) b+=c; try{return JSON.parse(b||'{}')}catch{return {}}}
-function layout(req,body){const g=req.session.guild,id=g&&g.id, items=['welcome','tickets','applications','protection','logs','autoReply','suggestions','feedback','giveaways','autoLine','tax','broadcast','activity','adminPoints','settings'];return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ZEUS Dashboard</title><link rel="stylesheet" href="/dashboard/public/css/style.css"><script defer src="/dashboard/public/js/main.js"></script></head><body><button class="mobile-menu" data-sidebar>☰</button><aside class="sidebar"><div class="brand"><div class="logo">Z</div><div><b>ZEUS</b><small><span class="dot"></span> Online</small></div></div>${g?`<div class="guild-pill"><span>${g.name}</span><a href="/guilds">تغيير</a></div>`:''}<nav>${id?`<h4>GENERAL</h4><a class="nav" href="/guild/${id}">⬡ Dashboard</a><a class="nav" href="/guild/${id}/commands">⬡ Commands</a><h4>SYSTEMS</h4>${items.map(x=>`<a class="nav" href="/guild/${id}/${x}">⬡ ${x}</a>`).join('')}`:''}</nav><div class="side-foot"><button id="themeToggle">🌙</button><a href="/logout">Logout</a></div></aside><main class="content">${body}</main><div id="toast"></div></body></html>`}
-async function oauthUser(code){if(!process.env.CLIENT_SECRET)throw Error('CLIENT_SECRET is required');const data=new URLSearchParams({client_id:CLIENT_ID,client_secret:process.env.CLIENT_SECRET,grant_type:'authorization_code',code,redirect_uri:`${BASE}/auth/callback`});const token=await fetch('https://discord.com/api/oauth2/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:data}).then(r=>r.json());if(token.error)throw Error(token.error_description||token.error);const headers={Authorization:`Bearer ${token.access_token}`};const [user,guilds]=await Promise.all([fetch('https://discord.com/api/users/@me',{headers}).then(r=>r.json()),fetch('https://discord.com/api/users/@me/guilds',{headers}).then(r=>r.json())]);const manage=BigInt(PermissionsBitField.Flags.ManageGuild);return{user,guilds:guilds.filter(g=>(BigInt(g.permissions)&manage)===manage)}}
-function commandsPage(commands,settings,resources){const cats=[...new Set(commands.map(c=>c.category))];return `<header class="page"><p>ZEUS / Commands</p><h1>إدارة الأوامر</h1><span>تحكم حقيقي بالأوامر والاختصارات والصلاحيات.</span></header><section class="toolbar"><input id="search" placeholder="Search command..."><select id="cat"><option value="">All</option>${cats.map(c=>`<option>${c}</option>`).join('')}</select><button data-enable-all>Enable All</button><button data-disable-all>Disable All</button></section><form id="commandsForm" class="command-grid">${commands.map(c=>{const s=Object.assign({enabled:true,aliases:[],cooldown:0,allowedRoles:[],allowedChannels:[]},settings[c.name]||{});return `<article class="card command" data-name="${c.name}" data-cat="${c.category}"><div class="row"><div><h3>/${c.name}</h3><p>${c.description}</p><small>${c.category}</small></div><label class="switch"><input name="${c.name}.enabled" type="checkbox" ${s.enabled?'checked':''}><span></span></label></div><details><summary>Settings</summary><label>Aliases<input name="${c.name}.aliases" value="${s.aliases.join(', ')}"></label><label>Cooldown<input type="number" name="${c.name}.cooldown" value="${s.cooldown}"></label><label>Allowed Roles<select multiple name="${c.name}.allowedRoles">${resources.roles.map(r=>`<option value="${r.id}" ${s.allowedRoles.includes(r.id)?'selected':''}>${r.name}</option>`).join('')}</select></label><label>Allowed Channels<select multiple name="${c.name}.allowedChannels">${resources.channels.map(r=>`<option value="${r.id}" ${s.allowedChannels.includes(r.id)?'selected':''}>#${r.name}</option>`).join('')}</select></label></details></article>`}).join('')}</form><div class="savebar"><span>تغييرات غير محفوظة</span><button data-reset>Reset</button><button data-save-commands>Save changes</button></div>`}
-function modulePage(module,config,resources){return `<header class="page"><p>ZEUS / ${module}</p><h1>${module}</h1><span>إعدادات محفوظة في MongoDB حسب Guild ID.</span></header><form id="moduleForm" data-module="${module}"><section class="card"><div class="row"><h2>General</h2><label class="switch"><input name="enabled" type="checkbox" ${config.enabled?'checked':''}><span></span></label></div><div class="form-grid"><label>Channel<select name="channelId"><option value="">None</option>${resources.channels.map(c=>`<option value="${c.id}" ${config.channelId===c.id?'selected':''}>#${c.name}</option>`).join('')}</select></label><label>Role<select name="roleId"><option value="">None</option>${resources.roles.map(r=>`<option value="${r.id}" ${config.roleId===r.id?'selected':''}>${r.name}</option>`).join('')}</select></label><label>Color<input type="color" name="color" value="${config.color||'#5865f2'}"></label></div></section><section class="card"><h2>Messages / Embed</h2><label>Title<input name="title" value="${config.title||''}"></label><label>Message<textarea name="message">${config.message||''}</textarea></label><label>Image URL<input name="image" value="${config.image||''}"></label></section>${module==='welcome'?welcomeEditor(config):''}<section class="card"><h2>Advanced JSON</h2><textarea name="__json" class="jsonbox">${JSON.stringify(config,null,2)}</textarea></section></form><div class="savebar"><span>تغييرات غير محفوظة</span><button data-reset>Reset</button><button data-save-module>Save changes</button></div>`}
-function welcomeEditor(config){const a=config.imageEditor?.avatar||{};return `<section class="card"><h2>محرر صورة الترحيب</h2><div class="welcome-editor" id="welcomeEditor"><div class="preview" id="welcomePreview"><img class="bg" src="${config.imageEditor?.backgroundUrl||''}"><div class="avatar" style="left:${a.x||420}px;top:${a.y||140}px;width:${a.size||168}px;height:${a.size||168}px;border:${a.borderWidth||6}px solid ${a.borderColor||'#fff'};border-radius:${a.borderRadius||50}%"></div></div><div class="form-grid"><label>Background URL<input name="imageEditor.backgroundUrl" value="${config.imageEditor?.backgroundUrl||''}"></label><label>Size<input type="range" name="imageEditor.avatar.size" min="64" max="320" value="${a.size||168}"></label><label>Border Radius<input type="range" name="imageEditor.avatar.borderRadius" min="0" max="50" value="${a.borderRadius||50}"></label><label>Border Width<input type="range" name="imageEditor.avatar.borderWidth" min="0" max="20" value="${a.borderWidth||6}"></label><label>Border Color<input type="color" name="imageEditor.avatar.borderColor" value="${a.borderColor||'#ffffff'}"></label><input type="hidden" name="imageEditor.avatar.x" value="${a.x||420}"><input type="hidden" name="imageEditor.avatar.y" value="${a.y||140}"><button type="button" data-center-avatar>Center Image</button></div><div class="vars">${['member','user','tag','user_id','server','server_id','member_count','inviter','invite_code','invite_uses','created_at','joined_at'].map(v=>`<button type="button" data-copy="{${v}}">{${v}}</button>`).join('')}</div></div></section>`}
-function startDashboard(client,port=process.env.DASHBOARD_PORT||3000){registerClient(client);const server=http.createServer(async(req,res)=>{try{const cookies=parseCookies(req);let sid=cookies.sid;if(!sid||!sessions.has(sid)){sid=crypto.randomBytes(18).toString('hex');sessions.set(sid,{});res.setHeader('Set-Cookie',`sid=${sid}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`)}req.session=sessions.get(sid);const url=new URL(req.url,BASE);if(url.pathname.startsWith('/dashboard/public/')){const file=path.join(__dirname,'public',url.pathname.replace('/dashboard/public/',''));return send(res,200,fs.readFileSync(file),file.endsWith('.css')?'text/css':'application/javascript')}if(url.pathname==='/login'){const u=new URL('https://discord.com/api/oauth2/authorize');u.search=new URLSearchParams({client_id:CLIENT_ID,redirect_uri:`${BASE}/auth/callback`,response_type:'code',scope:'identify guilds'});return redirect(res,u)}if(url.pathname==='/auth/callback'){Object.assign(req.session,await oauthUser(url.searchParams.get('code')));return redirect(res,'/guilds')}if(url.pathname==='/logout'){sessions.delete(sid);return redirect(res,'/login')}if(!req.session.user)return redirect(res,'/login');if(url.pathname==='/guilds'){const botGuilds=new Set(getClient()?.guilds.cache.keys()||[]);return send(res,200,layout(req,`<section class="page"><h1>اختر سيرفر ZEUS</h1><p>تظهر فقط السيرفرات التي تملك فيها Manage Guild ويوجد فيها البوت.</p></section><div class="grid">${req.session.guilds.map(g=>`<a class="card ${botGuilds.has(g.id)?'':'disabled'}" href="${botGuilds.has(g.id)?'/guild/'+g.id:'#'}"><b>${g.name}</b><span>${botGuilds.has(g.id)?'متاح':'البوت غير موجود'}</span></a>`).join('')}</div>`))}const m=url.pathname.match(/^\/(api\/)?guild\/([^/]+)\/?([^/]*)/);if(!m)return redirect(res,'/guilds');const guildId=m[2], section=m[3]||'';const g=getClient()?.guilds.cache.get(guildId), allowed=req.session.guilds?.some(x=>x.id===guildId);if(!g||!allowed)return send(res,403,layout(req,'<section class="page"><h1>403</h1><p>غير مصرح.</p></section>'));req.session.guild={id:g.id,name:g.name,icon:g.iconURL?.()};if(req.method==='POST'&&m[1]){const data=await body(req);if(section==='commands')return send(res,200,JSON.stringify({ok:true,data:await cmd.saveSettings(guildId,data.settings||{})}),'application/json');return send(res,200,JSON.stringify({ok:true,data:await cfg.writeModule(guildId,section,data)}),'application/json')}if(section==='commands')return send(res,200,layout(req,commandsPage(cmd.loadCommands(),await cmd.getSettings(guildId),await cfg.guildResources(guildId))));if(section)return send(res,200,layout(req,modulePage(section,await cfg.readModule(guildId,section),await cfg.guildResources(guildId))));const o=await cfg.overview(guildId);return send(res,200,layout(req,`<header class="page"><p>ZEUS / Dashboard</p><h1>${o.guild.name}</h1><span>لوحة مرتبطة بالبوت و MongoDB لكل Guild ID.</span></header><section class="stats">${Object.entries(o.stats).map(([k,v])=>`<article class="stat"><i>✦</i><b>${v}</b><h3>${k}</h3></article>`).join('')}</section><section class="module-grid">${Object.entries(o.configs).map(([k,v])=>`<article class="module-card"><div><h3>${k}</h3><p>${v.enabled||v.systems?'Enabled':'Disabled'}</p></div><a href="/guild/${guildId}/${k}">إعدادات</a></article>`).join('')}</section>`))}catch(e){console.error('[Dashboard]',e);send(res,500,`<h1>Dashboard Error</h1><pre>${e.message}</pre>`)}});server.listen(port,()=>console.log(`[Dashboard] ZEUS dashboard running on ${port}`));return server}
-module.exports={startDashboard};
+const keyValueService = require('../services/keyValueService');
+const { SECTIONS, SECTION_MAP, scopedKey } = require('./registry');
+const { botTokens, owner } = require('../config');
+
+const COOKIE = 'zeus_session';
+const SECRET = process.env.DASHBOARD_SESSION_SECRET || process.env.SESSION_SECRET || 'zeus-dashboard-dev-secret-change-me';
+const API = 'https://discord.com/api/v10';
+
+function sign(value) { return crypto.createHmac('sha256', SECRET).update(value).digest('base64url'); }
+function encodeSession(data) { const payload = Buffer.from(JSON.stringify(data)).toString('base64url'); return `${payload}.${sign(payload)}`; }
+function decodeSession(raw) {
+  if (!raw || !raw.includes('.')) return null;
+  const [payload, sig] = raw.split('.');
+  if (sign(payload) !== sig) return null;
+  try { return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')); } catch { return null; }
+}
+function getCookie(req, name) { return Object.fromEntries((req.headers.cookie || '').split(';').map((v) => v.trim().split('=').map(decodeURIComponent)).filter((v) => v[0]))[name]; }
+function setCookie(res, data) { res.setHeader('Set-Cookie', `${COOKIE}=${encodeURIComponent(encodeSession(data))}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`); }
+function clearCookie(res) { res.setHeader('Set-Cookie', `${COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`); }
+function publicBaseUrl(req) { return process.env.DASHBOARD_BASE_URL || `${req.protocol}://${req.get('host')}`; }
+function clientId(clients) { return process.env.DISCORD_CLIENT_ID || process.env.CLIENT_ID || clients[0]?.user?.id; }
+function inviteUrl(req, clients, guildId) {
+  const id = clientId(clients);
+  return `https://discord.com/oauth2/authorize?client_id=${id}&permissions=8&scope=bot%20applications.commands&guild_id=${guildId || ''}&disable_guild_select=${guildId ? 'true' : 'false'}`;
+}
+async function discordFetch(session, endpoint) {
+  const res = await fetch(`${API}${endpoint}`, { headers: { Authorization: `Bearer ${session.accessToken}` } });
+  if (!res.ok) throw new Error(`Discord API ${res.status}`);
+  return res.json();
+}
+function canManage(guild) { return guild.owner || (BigInt(guild.permissions || 0) & BigInt(0x20)) === BigInt(0x20) || (BigInt(guild.permissions || 0) & BigInt(0x8)) === BigInt(0x8); }
+function getBotGuild(clients, guildId) { return clients.map((client) => client.guilds.cache.get(guildId)).find(Boolean); }
+async function ensureAuth(req, res, next) {
+  const session = decodeSession(getCookie(req, COOKIE));
+  if (!session?.accessToken) return res.status(401).json({ error: 'AUTH_REQUIRED' });
+  req.session = session;
+  next();
+}
+function serializeChannel(channel) { return { id: channel.id, name: channel.name, type: channel.type, parentId: channel.parentId || null }; }
+function serializeRole(role) { return { id: role.id, name: role.name, color: role.hexColor, position: role.position, managed: role.managed }; }
+async function assertGuildAccess(req, clients, guildId) {
+  const botGuild = getBotGuild(clients, guildId);
+  if (!botGuild) { const err = new Error('BOT_NOT_IN_GUILD'); err.status = 403; throw err; }
+  if (req.session.user?.id === owner) return botGuild;
+  const guilds = await discordFetch(req.session, '/users/@me/guilds');
+  const guild = guilds.find((item) => item.id === guildId);
+  if (!guild || !canManage(guild)) { const err = new Error('NO_PERMISSION'); err.status = 403; throw err; }
+  return botGuild;
+}
+async function readSection(guildId, section) {
+  const values = {};
+  for (const field of section.fields || []) {
+    const value = await keyValueService.get(field.ns, scopedKey(field, guildId));
+    values[field.key] = value === undefined ? field.default ?? null : value;
+  }
+  return values;
+}
+async function writeSection(guildId, section, payload) {
+  const saved = {};
+  for (const field of section.fields || []) {
+    if (!(field.key in payload)) continue;
+    await keyValueService.set(field.ns, scopedKey(field, guildId), payload[field.key]);
+    saved[field.key] = payload[field.key];
+  }
+  await keyValueService.set('systemDB', `dashboard_last_update_${guildId}`, { section: section.id, at: Date.now() });
+  return saved;
+}
+async function overviewFor(guild, clients) {
+  const checks = [
+    ['ticketDB', `LogsRoom_${guild.id}`], ['applyDB', `apply_settings_${guild.id}`], ['BroadcastDB', `tokens_${guild.id}`],
+    ['giveawayDB', `giveaways_${guild.id}`], ['suggestionsDB', `suggestions_room_${guild.id}`], ['feedbackDB', `feedback_room_${guild.id}`],
+    ['autolineDB', `line_channels_${guild.id}`], ['systemDB', `welcome_config_${guild.id}`], ['protectDB', `protectLog_room_${guild.id}`],
+    ['logsDB', `log_messagedelete_${guild.id}`], ['taxDB', `tax_room_${guild.id}`], ['shortcutDB', `shortcuts_${guild.id}`],
+  ];
+  const active = (await Promise.all(checks.map(([ns, key]) => keyValueService.has(ns, key).catch(() => false)))).filter(Boolean).length;
+  const giveaways = await keyValueService.get('giveawayDB', `giveaways_${guild.id}`) || [];
+  const ticketsOpen = guild.channels.cache.filter((channel) => channel.name?.startsWith('ticket') || channel.name?.includes('تذكرة')).size;
+  const protection = await Promise.all(['ban_status', 'antibots_status', 'antideleteroles_status', 'antideleterooms_status'].map((key) => keyValueService.get('protectDB', `${key}_${guild.id}`)));
+  return {
+    guild: { id: guild.id, name: guild.name, icon: guild.iconURL({ dynamic: true }), members: guild.memberCount, channels: guild.channels.cache.size, roles: guild.roles.cache.size },
+    bot: { tag: guild.client.user.tag, id: guild.client.user.id, status: guild.client.ws.status === 0 ? 'متصل' : 'يعيد الاتصال', uptime: guild.client.uptime, bots: clients.length },
+    database: { status: 'متصلة', activeSettings: active },
+    stats: {
+      servers: clients.reduce((sum, client) => sum + client.guilds.cache.size, 0), activeSettings: active, openTickets: ticketsOpen,
+      protections: protection.filter((v) => v === 'on').length, logChannels: checks.filter(([ns]) => ns === 'logsDB').length,
+      openApplications: await keyValueService.has('applyDB', `apply_${guild.id}`), broadcasts: (await keyValueService.get('BroadcastDB', `tokens_${guild.id}`) || []).length,
+      giveaways: giveaways.length,
+    },
+    lastUpdate: await keyValueService.get('systemDB', `dashboard_last_update_${guild.id}`) || null,
+  };
+}
+function startDashboard(clients) {
+  const app = express();
+  app.set('trust proxy', 1);
+  app.use(express.json({ limit: '2mb' }));
+  app.use(express.static(path.join(__dirname, 'public')));
+
+  app.get('/auth/discord', (req, res) => {
+    const id = clientId(clients); const secret = process.env.DISCORD_CLIENT_SECRET || process.env.CLIENT_SECRET;
+    if (!id || !secret) return res.redirect('/?oauth=missing');
+    const state = crypto.randomBytes(16).toString('hex');
+    setCookie(res, { state });
+    const redirectUri = `${publicBaseUrl(req)}/auth/discord/callback`;
+    res.redirect(`https://discord.com/oauth2/authorize?client_id=${id}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=identify%20guilds&state=${state}`);
+  });
+  app.get('/auth/discord/callback', async (req, res) => {
+    try {
+      const base = decodeSession(getCookie(req, COOKIE));
+      if (!base?.state || base.state !== req.query.state) return res.redirect('/?oauth=state');
+      const id = clientId(clients); const secret = process.env.DISCORD_CLIENT_SECRET || process.env.CLIENT_SECRET;
+      const redirectUri = `${publicBaseUrl(req)}/auth/discord/callback`;
+      const tokenRes = await fetch(`${API}/oauth2/token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ client_id: id, client_secret: secret, grant_type: 'authorization_code', code: req.query.code, redirect_uri: redirectUri }) });
+      if (!tokenRes.ok) throw new Error('TOKEN_EXCHANGE_FAILED');
+      const token = await tokenRes.json();
+      const session = { accessToken: token.access_token, refreshToken: token.refresh_token, expiresAt: Date.now() + (token.expires_in * 1000) };
+      session.user = await discordFetch(session, '/users/@me');
+      setCookie(res, session); res.redirect('/guilds');
+    } catch (error) { res.redirect('/?oauth=failed'); }
+  });
+  app.get('/auth/logout', (req, res) => { clearCookie(res); res.redirect('/'); });
+  app.get('/api/me', ensureAuth, (req, res) => res.json({ user: req.session.user }));
+  app.get('/api/guilds', ensureAuth, async (req, res) => {
+    const guilds = (await discordFetch(req.session, '/users/@me/guilds')).filter(canManage);
+    const botGuildIds = new Set(clients.flatMap((client) => Array.from(client.guilds.cache.keys())));
+    res.json({ guilds: guilds.map((guild) => ({ ...guild, iconUrl: guild.icon ? `https://cdn.discordapp.com/icons/${guild.id}/${guild.icon}.png` : null, hasBot: botGuildIds.has(guild.id), inviteUrl: inviteUrl(req, clients, guild.id) })) });
+  });
+  app.get('/api/guilds/:guildId/meta', ensureAuth, async (req, res, next) => { try {
+    const guild = await assertGuildAccess(req, clients, req.params.guildId);
+    res.json({ sections: SECTIONS, channels: guild.channels.cache.filter((c) => [0,5,13,15].includes(c.type)).map(serializeChannel), roles: guild.roles.cache.filter((r) => r.id !== guild.id).sort((a,b)=>b.position-a.position).map(serializeRole), overview: await overviewFor(guild, clients), inviteUrl: inviteUrl(req, clients, guild.id) });
+  } catch (e) { next(e); } });
+  app.get('/api/guilds/:guildId/sections/:sectionId', ensureAuth, async (req, res, next) => { try {
+    await assertGuildAccess(req, clients, req.params.guildId); const section = SECTION_MAP.get(req.params.sectionId); if (!section) return res.status(404).json({ error: 'SECTION_NOT_FOUND' });
+    res.json({ section, values: section.id === 'overview' ? {} : await readSection(req.params.guildId, section) });
+  } catch (e) { next(e); } });
+  app.post('/api/guilds/:guildId/sections/:sectionId', ensureAuth, async (req, res, next) => { try {
+    await assertGuildAccess(req, clients, req.params.guildId); const section = SECTION_MAP.get(req.params.sectionId); if (!section) return res.status(404).json({ error: 'SECTION_NOT_FOUND' });
+    const saved = await writeSection(req.params.guildId, section, req.body || {}); res.json({ ok: true, saved });
+  } catch (e) { next(e); } });
+  app.get('/api/guilds/:guildId/export', ensureAuth, async (req, res, next) => { try {
+    await assertGuildAccess(req, clients, req.params.guildId); const data = {}; for (const section of SECTIONS.filter((s) => s.fields?.length)) data[section.id] = await readSection(req.params.guildId, section); res.json({ guildId: req.params.guildId, exportedAt: new Date().toISOString(), data });
+  } catch (e) { next(e); } });
+  app.post('/api/guilds/:guildId/import', ensureAuth, async (req, res, next) => { try {
+    await assertGuildAccess(req, clients, req.params.guildId); const input = req.body?.data || {}; for (const section of SECTIONS.filter((s) => input[s.id])) await writeSection(req.params.guildId, section, input[s.id]); res.json({ ok: true });
+  } catch (e) { next(e); } });
+  app.get(['/guilds', '/dashboard/:guildId', '/dashboard/:guildId/:section'], (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+  app.use((err, req, res, next) => res.status(err.status || 500).json({ error: err.message || 'SERVER_ERROR' }));
+  const port = Number(process.env.PORT || process.env.DASHBOARD_PORT || 3000);
+  app.listen(port, () => console.log(`[ZEUS Dashboard] يعمل على المنفذ ${port} (${botTokens.length} bot token(s))`));
+}
+module.exports = { startDashboard };
