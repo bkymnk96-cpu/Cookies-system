@@ -177,11 +177,9 @@ async function saveGuildShortcuts(guildId, shortcuts) {
 
 async function resolveShortcut(guildId, content) {
   const shortcuts = await getGuildShortcuts(guildId);
-  const entries = Object.entries(shortcuts).flatMap(([commandName, value]) => {
-    const aliases = Array.isArray(value?.aliases) ? value.aliases : Array.isArray(value) ? value : [value];
-    return aliases.filter(Boolean).map((shortcut) => [commandName, shortcut]);
-  }).sort((a, b) => String(b[1]).length - String(a[1]).length);
+  const entries = Object.entries(shortcuts).sort((a, b) => b[1].length - a[1].length);
   for (const [commandName, shortcut] of entries) {
+    if (!shortcut) continue;
     if (content === shortcut || content.startsWith(`${shortcut} `)) {
       return { commandName, shortcut };
     }
