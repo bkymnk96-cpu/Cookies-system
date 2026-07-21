@@ -14,7 +14,7 @@ const {
 const keyValueService = require("../../services/keyValueService");
 
 const embedColors = [
-  { name: "أحمر", value: "#FF0000" },
+  { name: "زيوس", value: "#FF0000" },
   { name: "أخضر", value: "#00FF00" },
   { name: "أزرق", value: "#0000FF" },
   { name: "أصفر", value: "#FFFF00" },
@@ -92,7 +92,7 @@ module.exports = {
       buttons.push(
         new ButtonBuilder()
           .setCustomId("edit_title")
-          .setLabel("✏️ العنوان")
+          .setLabel("✏️ زيوس")
           .setStyle(ButtonStyle.Primary),
         new ButtonBuilder()
           .setCustomId("edit_description")
