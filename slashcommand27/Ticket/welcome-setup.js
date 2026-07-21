@@ -51,7 +51,7 @@ module.exports = {
       color: "#00FF00",
       thumbnail: false,
       image: "",
-      messageType: "embed",
+      messageType: "embed", // القيمة المبدئية ستُستبدل بعد اختيار المستخدم
     };
 
     const generatePreviewEmbed = () =>
@@ -73,9 +73,12 @@ module.exports = {
           content += `**${welcomeTemplate.title}**\n`;
         }
         if (welcomeTemplate.description) {
-          content += `${welcomeTemplate.description}`;
+          content += `${welcomeTemplate.description}\n`;
         }
-        if (!content) {
+        if (welcomeTemplate.image) {
+          content += `\n[صورة](${welcomeTemplate.image})`;
+        }
+        if (!content.trim()) {
           content = "رسالة ترحيب فارغة";
         }
         return { content };
@@ -84,8 +87,9 @@ module.exports = {
       }
     };
 
-    const mainButtons = () =>
-      new ActionRowBuilder().addComponents(
+    const mainButtons = () => {
+      const buttons = [];
+      buttons.push(
         new ButtonBuilder()
           .setCustomId("edit_title")
           .setLabel("✏️ العنوان")
@@ -95,26 +99,39 @@ module.exports = {
           .setLabel("📝 النص")
           .setStyle(ButtonStyle.Primary),
         new ButtonBuilder()
-          .setCustomId("edit_color")
-          .setLabel("🎨 اللون")
-          .setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder()
           .setCustomId("edit_image")
           .setLabel("🖼️ صورة")
-          .setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder()
-          .setCustomId("toggle_thumbnail")
-          .setLabel(
-            welcomeTemplate.thumbnail ? "✅ الأيقونة" : "❌ الأيقونة"
-          )
-          .setStyle(ButtonStyle.Secondary),
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+      if (welcomeTemplate.messageType === "embed") {
+        buttons.push(
+          new ButtonBuilder()
+            .setCustomId("edit_color")
+            .setLabel("🎨 اللون")
+            .setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder()
+            .setCustomId("toggle_thumbnail")
+            .setLabel(
+              welcomeTemplate.thumbnail ? "✅ الأيقونة" : "❌ الأيقونة"
+            )
+            .setStyle(ButtonStyle.Secondary)
+        );
+      }
+
+      buttons.push(
         new ButtonBuilder()
           .setCustomId("toggle_message_type")
           .setLabel(
-            welcomeTemplate.messageType === "embed" ? "📋 إيمبد" : "📋 رسالة عادية"
+            welcomeTemplate.messageType === "embed"
+              ? "📋 رسالة عادية"
+              : "📋 إيمبد"
           )
-          .setStyle(ButtonStyle.Secondary),
+          .setStyle(ButtonStyle.Secondary)
       );
+
+      return new ActionRowBuilder().addComponents(buttons);
+    };
 
     const actionRow = () =>
       new ActionRowBuilder().addComponents(
@@ -128,15 +145,63 @@ module.exports = {
           .setStyle(ButtonStyle.Danger)
       );
 
+    // الخطوة الأولى: اختيار نوع الرسالة
     await interaction.reply({
-      ...buildMessagePayload(),
-      components: [mainButtons(), actionRow()],
+      content: "**اختر نوع رسالة الترحيب:**",
+      components: [
+        new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId("type_embed")
+            .setLabel("إيمبد")
+            .setStyle(ButtonStyle.Primary),
+          new ButtonBuilder()
+            .setCustomId("type_message")
+            .setLabel("رسالة عادية")
+            .setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder()
+            .setCustomId("cancel")
+            .setLabel("❌ إلغاء")
+            .setStyle(ButtonStyle.Danger)
+        ),
+      ],
     });
 
     const filter = (i) => i.user.id === interaction.user.id;
 
-    while (true) {
-      try {
+    try {
+      // انتظار اختيار النوع الأول
+      const typeChoice = await interaction.channel.awaitMessageComponent({
+        filter,
+        time: 300_000,
+      });
+
+      if (typeChoice.customId === "cancel") {
+        await typeChoice.deferUpdate();
+        return interaction.editReply({
+          content: null,
+          components: [],
+          embeds: [
+            new EmbedBuilder()
+              .setColor("#FF0000")
+              .setDescription("❌ تم إلغاء تصميم القالب."),
+          ],
+        });
+      }
+
+      if (typeChoice.customId === "type_embed") {
+        welcomeTemplate.messageType = "embed";
+      } else if (typeChoice.customId === "type_message") {
+        welcomeTemplate.messageType = "message";
+      }
+
+      await typeChoice.deferUpdate();
+      await interaction.editReply({
+        ...buildMessagePayload(),
+        components: [mainButtons(), actionRow()],
+      });
+
+      // بدء حلقة التعديلات
+      while (true) {
         const i = await interaction.channel.awaitMessageComponent({
           filter,
           time: 600_000,
@@ -144,7 +209,7 @@ module.exports = {
 
         if (i.customId === "cancel") {
           await i.deferUpdate();
-          return i.editReply({
+          return interaction.editReply({
             components: [],
             embeds: [
               new EmbedBuilder()
@@ -263,8 +328,12 @@ module.exports = {
           continue;
         }
 
-        // --- تغيير اللون ---
+        // --- تغيير اللون (للإيمبد فقط) ---
         if (i.customId === "edit_color") {
+          if (welcomeTemplate.messageType !== "embed") {
+            await i.deferUpdate();
+            continue;
+          }
           const row = new ActionRowBuilder().addComponents(
             new StringSelectMenuBuilder()
               .setCustomId("select_color")
@@ -291,8 +360,12 @@ module.exports = {
           continue;
         }
 
-        // --- تفعيل/تعطيل أيقونة السيرفر ---
+        // --- تفعيل/تعطيل أيقونة السيرفر (للإيمبد فقط) ---
         if (i.customId === "toggle_thumbnail") {
+          if (welcomeTemplate.messageType !== "embed") {
+            await i.deferUpdate();
+            continue;
+          }
           welcomeTemplate.thumbnail = !welcomeTemplate.thumbnail;
           await i.deferUpdate();
           await i.editReply({
@@ -302,7 +375,7 @@ module.exports = {
           continue;
         }
 
-        // --- تبديل نوع الرسالة (إيمبد / رسالة عادية) ---
+        // --- تبديل نوع الرسالة ---
         if (i.customId === "toggle_message_type") {
           welcomeTemplate.messageType =
             welcomeTemplate.messageType === "embed" ? "message" : "embed";
@@ -313,17 +386,17 @@ module.exports = {
           });
           continue;
         }
-      } catch (error) {
-        console.error(error);
-        return interaction.editReply({
-          components: [],
-          embeds: [
-            new EmbedBuilder()
-              .setColor("#FF0000")
-              .setDescription("⏰ انتهت مهلة التصميم أو حدث خطأ."),
-          ],
-        });
       }
+    } catch (error) {
+      console.error(error);
+      return interaction.editReply({
+        components: [],
+        embeds: [
+          new EmbedBuilder()
+            .setColor("#FF0000")
+            .setDescription("⏰ انتهت مهلة التصميم أو حدث خطأ."),
+        ],
+      });
     }
   },
 };
